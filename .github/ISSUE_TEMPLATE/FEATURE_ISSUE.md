@@ -1,3 +1,11 @@
+---
+name: Feature Request
+about: 새로운 기능 개발을 제안합니다.
+title: "[FEAT] "
+labels: enhancement
+assignees: ''
+---
+
 ## 어떤 기능인가요?
 
   > 추가하려는 기능에 대해 간결하게 설명해주세요
