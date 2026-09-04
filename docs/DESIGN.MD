@@ -1,9 +1,10 @@
 # 설계 문서 (docs/DESIGN.md)
 
-- 필수 구현 6개 항목에 대한 설계 근거를 기록한다.
+- 필수 구현 6개 항목에 대한 설계 근거를 기록한다. 
+- README 파일은 설계에 대한 것만 기록, DESIGN은 근거, 트레이드오프 등 기록.
 - "무엇을 선택했는지 + 왜 + 무엇을 버렸는지"를 반드시 작성한다.
 - 구현하지 못한 항목도 설계는 남기고 "미구현" 표시한다.
- 
+
 ---
 ## 1. 숙박 상품 통합 모델 설계
 
@@ -60,15 +61,43 @@ room_type_mapping
 ### 확장성 (숙소가 수천 개일 때)
 - 재고·요금 조회(②)는 한 번에 최대 50개 숙소 코드까지만 받으므로, 보유 숙소가 그 이상이면 50개 단위로 배치를 나눠 여러 번 호출해야 한다.
 
+--- 
+
 ## 3. Supplier 연동 어댑터
 
+### 구조
+공통 인터페이스 `SupplierAdapter` 하나를 두고, 공급사별 구현체(`SupplierAAdapter`, `SupplierBAdapter`)가 각자 WebClient로 자기 공급사 API를 호출한 뒤 표준 모델(`StandardRoomOffer`)로 정규화해서 반환한다.
+
+```java
+public interface SupplierAdapter {
+    SupplierType getSupplierType();
+    List<StandardRoomOffer> fetchAvailability(
+        List<String> hotelCodes, LocalDate checkIn, LocalDate checkOut, int adults, int children);
+    List<CatalogEntry> fetchCatalog(); // 숙소 목록(①) — 매핑 생성에 사용
+}
+```
+
+상위 서비스(`StaySearchService`, `MappingRefreshService`)는 이 인터페이스만 의존하고, `List<SupplierAdapter>`로 Spring이 모든 구현체를 자동 주입한다.
+
 ### 경계 설계
-- Supplier별 요청/응답 DTO는 어디에 두었는지:
-- 도메인 계층으로 새어나가지 않도록 한 방법:
+#### **Supplier별 요청/응답 DTO는 어디에 두었는지**
+각 어댑터 구현체와 같은 패키지(`supplier.suppliera`, `supplier.supplierb`)에 별도 클래스 파일로 두고, 접근 제어자를 package-private으로 제한한다. 인터페이스(`SupplierAdapter`)의 파라미터/리턴 타입에는 절대 등장시키지 않는다.
+####  **도메인 계층으로 새어나가지 않도록 한 방법**
+1. `SupplierAdapter` 인터페이스의 시그니처에는 표준 모델(`StandardRoomOffer`, `CatalogEntry`)과 자바 기본 타입만 사용하고, 공급사 DTO는 등장시키지 않는다.
+2. DTO → 표준 모델 변환 로직은 각 어댑터와 같은 패키지의 전용 ``Mapper 클래스`` (`SupplierAMapper`, `SupplierBMapper`, package-private)에서 처리한다. 세금 포함/별도, 기간 총액/날짜별 요금 같은 표준화 계산(1번 항목)이 이 지점에 몰리므로, 어댑터 클래스(HTTP 호출·에러 처리 담당)와 책임을 분리하고 변환 로직만 독립적으로 단위 테스트할 수 있게 했다.
+3. 실패 판정도 어댑터 내부에서 표준 신호로 변환한다. 공급사 A(HTTP 4xx/5xx)든 공급사 B(HTTP 200 + 본문 코드)든, 실패로 판단되면 동일하게 `SupplierAdapterException`(공급사 타입 + `SupplierErrorCode` 보유)을 던진다. 상위 계층은 "이 예외를 잡았는가"만으로 성공/실패를 판단하면 되고, 어떤 방식으로 실패를 알리는 공급사인지는 알 필요가 없다.
+4. package-private 접근 제한 덕분에, 도메인 패키지(`search`, `mapping`)에서 공급사 DTO를 import하려고 하면 컴파일 자체가 안 되어 언어 차원에서 경계가 강제된다.
+
 ### 신규 Supplier 추가 시 변경 지점
-1.
-2.
-3.
+1. `SupplierType` enum에 신규 상수 추가 (ex: SupplierX)
+2. 신규 `SupplierXAdapter` 구현체 작성 (요청/응답 DTO + 표준 모델 변환 로직 포함)
+3. `@Component`로 등록하면 Spring이 `List<SupplierAdapter>`에 자동으로 포함시킴 (상위 서비스 코드 수정 불필요)
+4. 매핑 생성 로직이 신규 어댑터의 `fetchCatalog()`도 자동으로 순회하므로, 앱을 재기동하면 매핑도 자동으로 채워짐
+### 트레이드오프
+`SupplierType`을 enum으로 고정했기 때문에, 신규 공급사 추가 시 1번(enum 수정)은 코드 재배포가 필요하다.
+
+공급사 수가 동적으로 자주 늘어나는 서비스라면 String 코드 기반으로 설계하는 게 나을 수 있지만, 이 과제는 공급사 2개로 고정된 범위이므로 타입 안정성이 더 중요하다고 판단해 enum을 유지했다.
+ 
 ---
 
 ## 4. 통합 검색 API
@@ -76,19 +105,44 @@ room_type_mapping
 ### 요청/응답 스펙
 - (README API 명세 섹션과 동일하게 유지)
 ### 예약 가능 판정
-- 0이면 예약 불가로 처리 여부:
-- 예약 불가 상품 노출 방식:
-### 50개 초과 시 배치 처리
-- 미정 
----
+#### 0이면 예약 불가로 처리 여부
+연박 기간에 포함된 날짜 중 하루라도 재고(availableRooms)가 0이면 해당 객실 타입 전체를 예약 불가로 처리한다. 근거: 고객은 기간 전체를 예약해야 하므로, 하루라도 재고가 없으면 그 예약 자체가 불가능하기 때문이다.
+#### 예약 가능 시 노출 수량
+기간 중 **최소 잔여 객실 수(min)**를 응답에 노출한다. 근거: "이 숫자만큼은 확실히 예약 가능하다"는 보수적 보장을 주기 위함 — 평균이나 첫날 값은 기간 중 다른 날짜의 재고 부족을 감출 위험이 있다.
+#### 예약 불가 상품 노출 방식
+응답 목록에서 제외하지 않고, `availableRooms: 0`인 상태로 그대로 포함시킨다. 
 
-## 5. 연동 견고성
+근거: FR-4 응답 스펙상 "예약 가능 객실 수"가 필수 필드이므로, 클라이언트가 이 값으로 직접 예약 가능 여부를 판단하고 표시(예: "매진") 방식을 결정할 수 있게 하는 것이 더 유연하다. 서버에서 미리 필터링해버리면 "왜 안 보이는지"에 대한 정보가 손실되기 때문이다.
+
+### 50개 초과 시 배치 처리
+매핑 테이블에서 조회한 보유 숙소를 공급사별로 그룹핑한 뒤, 각 그룹을 50개 단위로 나눠 여러 번의 `fetchAvailability` 호출로 분할한다 (공급사 재고·요금 조회 API의 1회 최대 숙소 코드 개수 제약, DESIGN.md 2번 참조).
+
+- 숙소가 120개면 → fetchAvailability([50개], ...), fetchAvailability([50개], ...), fetchAvailability([20개], ...) 이렇게 3번 호출해야 함 (배치 분할)
+- 이 3번의 호출을, 그리고 Supplier A/B 각각에 대한 호출을 동시에 실행 (CompletableFuture 병렬화)
+### 병렬화 방식
+> `CompletableFuture` (전용 스레드풀 Bean 사용) 결정.
+
+`SupplierAdapter` 인터페이스는 동기(블로킹) 리턴 타입(`List<StandardRoomOffer>`)을 유지하고, 서비스 계층(`StaySearchService`)에서 공급사별, 배치별 호출을 `CompletableFuture.supplyAsync(..., executor)`로 감싸 동시에 실행한 뒤 `CompletableFuture::join`으로 결과를 모아 병합한다. 
+- 내부적으로는 WebClient(리액티브 API)를 그대로 사용하되 어댑터 안에서 `.block()`으로 동기화해 반환한다.
+    - 선택 근거: REQUIREMENTS.md 비기능 요구사항에 "외부 API 호출은 WebClient 사용, WebFlux 전면 도입은 요구되지 않는다"고 명시되어 있어, WebClient는 유지하면서 애플리케이션 전체를 리액티브 체인으로 짤 필요는 없다고 판단했다. 또한 공급사 2개, 배치 수가 적은 이 과제 규모에서는 WebFlux(이벤트 루프 기반 논블로킹)의 이점이 거의 드러나지 않고, 기존 동기 인터페이스 설계와도 자연스럽게 맞물린다.
+  - 검토했다 폐기한 대안: 인터페이스를 `Mono<List<StandardRoomOffer>>`로 바꾸고 `Flux.merge()`로 병렬 실행하는 완전 리액티브 방식이다. 
+    - 대규모 동시 요청 상황에서는 유리하지만,과제 규모 대비 복잡도가 더 크다고 판단해 채택하지 않았다. 다만 트래픽이 커지는 상황을 가정한 확장 방향으로는 문서에 남겨둔다.
+  - 트레이드오프: WebClient는 논블로킹 I/O가 강점인데, 어댑터 내부에서 `.block()`을 호출하므로 그 이점을 완전히 살리지는 못한다. 대신 스레드풀 크기로 동시성을 명시적으로 제어할 수 있고, 코드가 단순하다는 이점과 맞바꿨다.
+    - 전용 스레드풀(`Executor` Bean)을 별도로 등록해 사용한다. 공용 `ForkJoinPool.commonPool()`을 그대로 쓰면 다른 비동기 작업과 자원을 경합할 수 있기 때문이다.
+- 분할된 배치 호출들은 공급사 내부적으로도, 공급사 간에도 모두 위 방식으로 병렬 실행한다. 순차 처리하면 숙소 수가 많아질수록 응답 지연이 선형으로 늘어나므로, 병렬화로 전체 응답 시간을 배치 중 가장 느린 1건 수준으로 억제한다.
+- 배치 중 일부가 실패해도(타임아웃/장애, `SupplierAdapterException` 발생) 나머지 배치 결과는 정상적으로 병합해 응답한다.
+- FR-5 부분 실패 허용 원칙을 배치 단위에도 동일하게 적용한다.
+
+---
+## 5. 연동 견고성습
 
 ### 타임아웃
 - 연결 타임아웃: ___ms, 근거:
 - 응답 타임아웃: ___ms, 근거:
+
 ### 부분 실패 허용
 - 구현 방식:
+
 ### 실패 판정 통일
 - A: HTTP 4xx/5xx → 실패
 - B: HTTP 200 + resultCode != '0000' → 실패로 정규화하는 지점:
