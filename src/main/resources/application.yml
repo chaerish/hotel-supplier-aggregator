@@ -1,0 +1,12 @@
+spring:
+  application:
+    name: aggregator
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:aggregator}
+    username: ${DB_USERNAME:aggregator}
+    password: ${DB_PASSWORD:aggregator}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
