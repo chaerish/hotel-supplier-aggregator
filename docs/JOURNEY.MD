@@ -79,13 +79,54 @@
 ## Day 2 - 2026-09-03 (목) - 설계
 
 ### 오늘의 목표
-- [ ] DESIGN.md 3~5번 초안 채워서 6개 항목 전체 뼈대 완성 
-- [ ] Spring Boot 프로젝트에 도메인 패키지 구조 잡기 (domain/mapping/adapter/search/resilience/mock)
-- [ ] JOURNAL Day 2 기록 및 회고 작성 
-
+- [x] DESIGN.md 3~4번 초안 채워서 항목 뼈대 완성 
+- [x] 구현에 필요한 어댑터 패턴 다시 이론 복습
+- [x] Spring Boot 프로젝트에 도메인 패키지 구조 설계 (domain/mapping/adapter/search/resilience/mock)
+- [x] JOURNAL Day 2 기록 및 회고 작성 
 
 ### 수행 내용
-- 도메인 파악 
+- 어댑터(Adapter) 디자인 패턴 개념을 다시 공부했다 (Target/Adaptee/Adapter 구조, GoF 패턴으로서의 의미). 또한 이 과제에서는 어떤 것들을 각각 의미하는 지 파악.
+- Supplier 어댑터의 패키지 구조를 설계했다: `domain`(표준 모델), `supplier`(어댑터 인터페이스 + 공급사별 하위 패키지), `mapping`, `search`, `config`로 나누고, 공급사별 DTO는 각 하위 패키지에 별도 파일로 두고 package-private으로 제한하기로 결정.
+- 실패 처리 표준화를 위한 `SupplierErrorCode`(enum) + `SupplierAdapterException`(커스텀 예외) 설계를 진행했다.
+- DTO → 표준 모델 변환 로직 위치(어댑터 내부 private 메서드 vs 별도 Mapper 클래스)를 비교하고, 별도 Mapper 클래스(`SupplierAMapper`, `SupplierBMapper`)로 분리하기로 결정.
+- 병렬 호출 방식(WebFlux 리액티브 vs CompletableFuture)의 장단점을 비교하고 CompletableFuture로 결정.
+- 위 결정들을 DESIGN.md 3번(경계 설계), 4번(50개 초과 시 배치 처리) 항목에 반영해 작성했다.
+
+### 의사결정
+#### [DTO→표준 모델 변환 로직 위치: 별도 Mapper 클래스]
+- 요금 표준화(세금 포함/별도, 기간 총액/날짜별) 계산이 이 지점에 몰려 로직이 복잡해질 가능성이 크고, 변환 로직만 독립적으로 단위 테스트하고 싶어서 어댑터 클래스(HTTP 호출 담당)와 책임을 분리했다.
+    - 검토했다 폐기한 대안: 어댑터 내부 private 메서드 — 필드가 단순 대입 수준일 때는 충분하지만, 표준화 계산이 들어가는 이 과제 특성상 어댑터 클래스가 비대해질 위험이 있어 폐기.
+#### [병렬 호출 방식: CompletableFuture]
+- `SupplierAdapter` 인터페이스를 동기 리턴 타입으로 유지하면서, 서비스 계층에서 `CompletableFuture.supplyAsync(..., executor)`로 공급사별·배치별 호출을 동시에 실행하기로 결정. WebClient는 그대로 사용(내부에서 `.block()`으로 동기화)하되, 애플리케이션 전체를 리액티브 체인으로 짜지는 않는 방식.
+    - 검토했다 폐기한 대안: `Mono<List<StandardRoomOffer>>` + `Flux.merge()` 완전 리액티브 방식 — 요구사항 문서에 "WebFlux 전면 도입 불필요"로 명시되어 있고, 공급사 2개·배치 수가 적은 과제 규모에서는 이벤트 루프 기반 논블로킹의 이점이 거의 드러나지 않는 반면, 리액티브 체인 특유의 디버깅 난이도만 늘어난다고 판단해 폐기. 다만 트래픽이 커질 경우의 대안으로 문서에는 남겨둠.
+    - 트레이드오프 인지: 어댑터 내부에서 `.block()`을 호출하므로 WebClient의 논블로킹 이점을 완전히 살리지 못한다는 점은 인지하고 있으며, 대신 코드 단순성과 명시적 스레드풀 제어를 택했다.
+#### [실패 처리 표준화: SupplierErrorCode + SupplierAdapterException]
+- 공급사 A(HTTP 상태 코드)와 B(HTTP 200 + 본문 코드)의 서로 다른 실패 알림 방식을, 어댑터 내부에서 공통 커스텀 예외(`SupplierAdapterException`, 공급사 타입 + 표준 에러 코드 보유)로 통일해 던지기로 결정. 상위 계층은 이 예외 타입 하나만 catch하면 부분 실패 처리가 가능하다.
+    - 검토했다 폐기한 대안: 실패 시 단순히 빈 리스트만 반환 — 실패와 "원래 결과가 0건"인 정상 케이스를 구분할 수 없어, 부분 실패 여부를 응답에 포함해야 하는 FR-4 요구사항을 충족하지 못해 폐기.
+### 막힌 지점 / 시행착오
+- 처음엔 "WebClient를 쓰라"는 요구사항과 "CompletableFuture로 병렬화"가 서로 모순되는 게 아닌지 헷갈렸다. WebClient는 HTTP 클라이언트 "라이브러리" 선택이고, WebFlux(리액티브 스타일)는 별개의 "프로그래밍 스타일" 선택이라는 걸 구분하고 나서, WebClient는 그대로 사용하되 결과를 어댑터 내부에서 `.block()`으로 동기화하고 그 바깥에서 CompletableFuture로 병렬화하는 조합이 요구사항과 상충하지 않는다는 걸 확인했다.
+- 지금은 과제 최소 요구사항에 맞춰 CompletableFuture로 결정하나, 추후 동시 접속이 많아질 때 등과 같은 확장성을 고려한다면 WebFlux(Mono/Flux)에 대한 코드도 생각하고 있다.
+### AI 활용
+#### 무엇을 물었는지
+- 어댑터 패턴의 개념(Target/Adaptee/Adapter)과 이 과제에 왜 필요한지, DTO를 어느 패키지에 두고 접근 제어자를 어떻게 설정해야 도메인 계층으로 안 새어나가는지 물어봄.
+- Mapper 클래스로 분리하는 기준(private 메서드 vs 별도 클래스)을 물어봄.
+- WebFlux 리액티브 방식과 CompletableFuture 방식의 기술적 장단점(스레드 모델, 확장성, 디버깅 난이도, 요구사항과의 정합성)을 비교해달라고 물어봄.
+- WebClient 사용 요구사항과 CompletableFuture 병렬화가 상충하지 않는지 확인함.
+
+##### AI 답변을 어떻게 수용/수정/거부했는지
+- 어댑터 패턴 설명과 패키지 구조 제안은 개념적으로 타당하다고 판단해 채택하되, 실제 클래스 설계(경계/변경 지점 등)는 과제 요구사항 문서와 직접 대조해 표현을 다시 정리했다.
+- Mapper 클래스 분리 기준은 "이 과제는 요금 표준화 로직이 복잡해질 가능성이 크다"는 이유로 Mapper 분리 쪽을 택했고, 코드는 아직 직접 작성하지 않았다 (설계만 AI와 논의, 구현은 직접 진행 예정).
+- WebFlux vs CompletableFuture 비교표는 그대로 수용했으나, 최종 선택 근거는 "요구사항 문서에 WebFlux 전면 도입이 명시적으로 불필요하다고 되어 있다"는 점을 직접 재확인한 뒤 결정에 반영했다.
+- DESIGN.md/JOURNAL.md에 AI가 생성한 문장을 그대로 붙여넣지 않고, 직접 검토하고 수정하며 작성했다.
+
+## Day 3 - 2026-09-04 (금) - 설계
+
+### 오늘의 목표
+- [ ] 
+
+### 수행 내용
+- 항목 작성 
+- 
 
 ### 의사결정
 #### [의사결정 사안]
