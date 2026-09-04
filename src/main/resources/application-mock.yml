@@ -1,0 +1,10 @@
+# mock 프로필은 MockSupplierController만 서빙하면 되므로 DB 연결이 필요 없다.
+# (Spring Boot 4는 자동 설정 클래스가 org.springframework.boot.<모듈>.autoconfigure 로 재편됨)
+server:
+  port: 9191
+
+spring:
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.hibernate.autoconfigure.HibernateJpaAutoConfiguration
