@@ -67,3 +67,8 @@ Temporary Items
 ### macOS Patch ###
 # iCloud generated files
 *.icloud
+
+docs/*.pdf
+
+### 로컬 전용 (커밋 금지) ###
+CLAUDE.local.md
