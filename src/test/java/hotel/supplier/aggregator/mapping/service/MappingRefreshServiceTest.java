@@ -1,7 +1,10 @@
-package hotel.supplier.aggregator.mapping;
+package hotel.supplier.aggregator.mapping.service;
 
 import hotel.supplier.aggregator.domain.CatalogEntry;
 import hotel.supplier.aggregator.domain.SupplierType;
+import hotel.supplier.aggregator.mapping.entity.StayMapping;
+import hotel.supplier.aggregator.mapping.repository.RoomTypeMappingRepository;
+import hotel.supplier.aggregator.mapping.repository.StayMappingRepository;
 import hotel.supplier.aggregator.supplier.SupplierAdapter;
 import hotel.supplier.aggregator.supplier.error.SupplierAdapterException;
 import hotel.supplier.aggregator.supplier.error.SupplierErrorCode;

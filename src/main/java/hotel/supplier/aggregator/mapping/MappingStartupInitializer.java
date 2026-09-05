@@ -1,5 +1,6 @@
 package hotel.supplier.aggregator.mapping;
 
+import hotel.supplier.aggregator.mapping.service.MappingRefreshService;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;

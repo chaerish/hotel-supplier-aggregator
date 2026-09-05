@@ -1,4 +1,4 @@
-package hotel.supplier.aggregator.mapping;
+package hotel.supplier.aggregator.mapping.entity;
 
 import hotel.supplier.aggregator.domain.SupplierType;
 import jakarta.persistence.Column;
