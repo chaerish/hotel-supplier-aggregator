@@ -82,7 +82,7 @@ class MockSupplierController {
         }
     }
 
-    // 부록 A.1 / A.2 의 응답 예시를 그대로 문자열로 넣었다 (요청 파라미터는 무시하고 고정 응답)
+    // 요청 파라미터는 무시하고 고정 응답을 반환한다
     private static final String A_HOTELS = """
         {
           "items": [
