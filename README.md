@@ -121,11 +121,12 @@ docker compose exec postgres psql -U aggregator -d aggregator
 src/main/java/.../
 ├── domain/           # 표준 숙박 상품 모델
 ├── mapping/          # 공급사 코드 ↔ 내부 식별자 매핑
-├── adapter/
-│   ├── supplierA/    # Supplier A 전용 요청/응답 DTO + 변환
-│   └── supplierB/    # Supplier B 전용 요청/응답 DTO + 변환
+├── supplier/
+│   ├── SupplierAdapter.java  # 공통 인터페이스
+│   ├── suppliera/    # Supplier A 전용 요청/응답 DTO + 변환
+│   └── supplierb/    # Supplier B 전용 요청/응답 DTO + 변환
 ├── search/           # 통합 검색 서비스, 병렬 조회, 병합
-├── resilience/        # 타임아웃, 부분 실패, 실패 판정 통일
+├── config/           # WebClient 등 설정
 └── mock/             # Mock Supplier 컨트롤러
 ```
 
