@@ -46,6 +46,25 @@ room_type_mapping
   - room_type_name
 ```
 
+```mermaid
+erDiagram
+    STAY_MAPPING ||--o{ ROOM_TYPE_MAPPING : has
+    STAY_MAPPING {
+        long internal_stay_id PK
+        string supplier_code
+        string supplier_hotel_code
+        string stay_name
+    }
+    ROOM_TYPE_MAPPING {
+        long internal_room_type_id PK
+        long internal_stay_id FK
+        string supplier_code
+        string supplier_hotel_code
+        string supplier_room_type_code
+        string room_type_name
+    }
+```
+
 ### 매핑 갱신 시점
 - 선택: 앱 기동 시 1회
 - 근거: 공급사의 전체 상품 목록은 자주 바뀌지 않는 정적 정보이므로, 검색 요청마다 재조회할 필요가 없다. 매번 조회하면 불필요한 API 호출과 응답 지연이 발생해, 안내문이 강조한 "①과 ②의 성격 차이 반영"과 반대 방향이 된다.
@@ -77,6 +96,34 @@ public interface SupplierAdapter {
 }
 ```
 
+```mermaid
+classDiagram
+    class SupplierAdapter {
+        <<interface>>
+        +getSupplierType() SupplierType
+        +fetchAvailability(hotelCodes, checkIn, checkOut, adults, children) List~StandardRoomOffer~
+        +fetchCatalog() List~CatalogEntry~
+    }
+    class SupplierAAdapter {
+        -SupplierAMapper mapper
+    }
+    class SupplierBAdapter {
+        -SupplierBMapper mapper
+    }
+    class StaySearchService {
+        -List~SupplierAdapter~ adapters
+    }
+    class SupplierAdapterException {
+        +SupplierType supplierType
+        +SupplierErrorCode errorCode
+    }
+    SupplierAdapter <|.. SupplierAAdapter
+    SupplierAdapter <|.. SupplierBAdapter
+    StaySearchService --> SupplierAdapter : 의존
+    SupplierAAdapter ..> SupplierAdapterException : throws
+    SupplierBAdapter ..> SupplierAdapterException : throws
+```
+
 상위 서비스(`StaySearchService`, `MappingRefreshService`)는 이 인터페이스만 의존하고, `List<SupplierAdapter>`로 Spring이 모든 구현체를 자동 주입한다.
 
 ### 경계 설계
@@ -101,6 +148,35 @@ public interface SupplierAdapter {
 ---
 
 ## 4. 통합 검색 API
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant Ctrl as StaySearchController
+    participant Svc as StaySearchService
+    participant A as SupplierAAdapter
+    participant B as SupplierBAdapter
+    participant MA as Mock Supplier A
+    participant MB as Mock Supplier B
+
+    C->>Ctrl: GET /api/v1/stays/search
+    Ctrl->>Svc: search(checkIn, checkOut, adults, children)
+    Svc->>Svc: mapping DB 조회, 공급사별 그룹핑, 50개 단위 배치 분할
+    par 공급사 A 배치 병렬 호출
+        Svc->>A: fetchAvailability(batch)
+        A->>MA: GET /a/v1/availability
+        MA-->>A: 200 OK
+        A-->>Svc: List~StandardRoomOffer~
+    and 공급사 B 배치 병렬 호출
+        Svc->>B: fetchAvailability(batch)
+        B->>MB: GET /b/api/search
+        MB-->>B: 200 OK 또는 E503
+        B-->>Svc: List~StandardRoomOffer~ 또는 SupplierAdapterException
+    end
+    Svc->>Svc: 정상 응답 병합, 실패는 partialFailures로 기록
+    Svc-->>Ctrl: SearchResponse
+    Ctrl-->>C: 200 OK
+```
 
 ### 요청/응답 스펙
 - (README API 명세 섹션과 동일하게 유지)
