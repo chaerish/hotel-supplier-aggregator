@@ -136,12 +136,12 @@
 - [x] StayMappingRepository, RoomTypeMappingRepository 작성
 - [x] 매핑 생성 로직(refreshMapping) 작성, 앱 기동 시 1회 호출
 - [x] 일부 공급사의 fetchCatalog() 실패 시 그 공급사만 건너뛰는 처리
-- [ ] search 패키지 구조 잡기
-- [ ] StaySearchService에 List<SupplierAdapter> 자동 주입 설정
-- [ ] 매핑 테이블 조회 결과를 공급사별로 그룹핑하는 로직 작성
-- [ ] 50개 초과 시 배치 분할 로직 작성
-- [ ] CompletableFuture 기반 병렬 호출과 join 결과 병합 뼈대 작성 (전용 Executor Bean 포함)
-- [ ] 공급사 실패(SupplierAdapterException) 발생 시 부분 실패로 기록하고 나머지 결과로 계속 진행하는 처리 작성
+- [x] search 패키지 구조 잡기
+- [x] StaySearchService에 List<SupplierAdapter> 자동 주입 설정
+- [x] 매핑 테이블 조회 결과를 공급사별로 그룹핑하는 로직 작성
+- [x] 50개 초과 시 배치 분할 로직 작성
+- [x] CompletableFuture 기반 병렬 호출과 join 결과 병합 뼈대 작성 (전용 Executor Bean 포함)
+- [x] 공급사 실패(SupplierAdapterException) 발생 시 부분 실패로 기록하고 나머지 결과로 계속 진행하는 처리 작성
 
 ### 수행 내용
 - `SupplierAMapper`, `SupplierBMapper`를 구현해 각 공급사 응답 DTO를 표준 모델(`CatalogEntry`, `StandardRoomOffer`)로 변환하는 로직을 작성했다.
@@ -156,6 +156,10 @@
 - 통합 검색 서비스(이슈 #5) 작업 전에, 정작 매핑 테이블(엔티티, 리포지토리, 채우는 로직)이 전혀 없다는 걸 발견해서 이슈 #14로 분리해 먼저 구현했다.
 - `StayMapping`, `RoomTypeMapping` JPA 엔티티와 리포지토리를 작성하고, `MappingRefreshService`로 각 `SupplierAdapter`의 `fetchCatalog()`를 호출해 매핑을 채우도록 구현했다. 앱 기동 시 1회 실행되도록 `MappingStartupInitializer`(`ApplicationRunner`)를 붙였다.
 - docker-compose로 전체 스택(Postgres, Mock Supplier, 본체 앱)을 직접 띄워서 매핑 테이블이 실제로 채워지는지 확인했다.
+- 이슈 #5(통합 검색 API 뼈대)를 구현했다. `StaySearchService`가 공급사별로 `StayMappingRepository`에서 보유 숙소 코드를 조회해 그룹핑하고, 50개 단위로 배치를 나눠 `CompletableFuture`로 병렬 호출한 뒤 결과를 병합한다. 공급사 실패는 배치 단위로 잡아 `PartialFailure`로 기록하고 나머지 배치는 계속 진행한다.
+- 전용 스레드풀 Bean(`SearchExecutorConfig`)을 `config` 패키지에 추가했다.
+- `StaySearchServiceTest`를 작성해 그룹핑, 배치 분할(120개 입력 시 3번 호출), 부분 실패 시나리오를 검증했다.
+- HTTP 컨트롤러는 이번 범위에 포함하지 않았다. 이슈 #5 작업 상세에 컨트롤러 항목이 없어서, 서비스 뼈대까지만 구현했다.
 
 ### 의사결정
 #### [요금 합산 로직: 공통화하지 않고 Mapper 별로 처리]
@@ -173,6 +177,10 @@
 #### [Lombok 도입]
 지금까지는 순수 Java(record, 명시적 생성자)로만 작성해왔는데, JPA 엔티티에서 반복되는 protected 기본 생성자 작성을 줄이기 위해 Lombok을 새로 도입했다. `@NoArgsConstructor(access = AccessLevel.PROTECTED)`로 `StayMapping`, `RoomTypeMapping`의 기본 생성자를 대체했고, 앞으로 추가되는 엔티티에도 계속 적용하기로 했다.
   - 검토했다 폐기한 대안: 계속 순수 Java 유지. 엔티티가 지금은 2개뿐이라 새 의존성 없이도 충분하다고 볼 수 있지만, 앞으로 엔티티가 늘어날 걸 고려해 지금 도입하는 쪽을 택했다.
+
+#### [검색 병렬 호출용 스레드풀: 고정 크기 스레드풀]
+`Executors.newFixedThreadPool(10)`을 전용 Executor로 등록했다. 공급사 2개, 배치 수가 적은 지금 규모에서는 동시성 요구가 크지 않아 크기를 예측 가능하게 고정하는 쪽이 단순하다고 판단했다.
+  - 검토했다 폐기한 대안: 가상 스레드(`Executors.newVirtualThreadPerTaskExecutor()`). Java 21의 가상 스레드는 이런 I/O 바운드 블로킹 호출(WebClient의 `.block()`)에 잘 맞지만, 지금 규모에서는 이점이 크지 않고 프로젝트 전체가 아직 새 동시성 모델을 검증 없이 쓰기보다 예측 가능한 고정 스레드풀을 우선하는 기조였어서 보류했다.
 
 ### 막힌 지점 / 시행착오
 - 재고 최솟값 계산 로직이 두 Mapper 에 거의 같은 형태로 중복돼 있다(설명 주석까지 동일). 공통 메서드로 뽑을지 고민했지만, 각 Mapper 가 받는 컬렉션 타입(`AvailabilityItem.dailyRates()`와 `SearchItem.inventory()`)이 서로 달라 이를 묶으려면 별도 인터페이스가 필요했다. 
