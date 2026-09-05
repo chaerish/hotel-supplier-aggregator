@@ -28,7 +28,7 @@
 ```bash
 docker compose up --build
 ```
-- `postgres`: 5432 포트
+- `postgres`: 컨테이너 내부는 5432, 호스트에는 5433으로 노출 (로컬에 이미 PostgreSQL이 5432를 쓰고 있는 경우와 충돌하지 않도록)
 - `mock-supplier`: 9191 포트 (`SPRING_PROFILES_ACTIVE=mock`으로 같은 이미지를 재사용)
 - `app`: 8080 포트, `postgres`와 `mock-supplier`가 기동된 뒤에 시작됨
 
