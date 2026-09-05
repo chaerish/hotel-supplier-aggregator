@@ -16,6 +16,49 @@
 | 요금 (Price) | 요청한 숙박 기간 전체의 세금 포함(gross) 총액 |
 | 재고 (Inventory) | 날짜별 잔여 객실 수 |
 
+### 클래스 구조
+표준 모델은 record 기반 값 객체로 구성한다. `CatalogEntry`는 어댑터의 `fetchCatalog()` 결과(숙소 목록, 매핑 생성에 사용)이고, `StandardRoomOffer`는 `fetchAvailability()` 결과(검색 결과, 요금과 재고 포함)다. 둘 다 공급사 코드(`supplierHotelCode`, `supplierRoomTypeCode`) 기준이며, 내부 식별자로 바꾸는 건 매핑 계층(2번 항목)의 책임으로 분리했다.
+
+```mermaid
+classDiagram
+    class SupplierType {
+        <<enumeration>>
+        SUPPLIER_A
+        SUPPLIER_B
+    }
+    class Money {
+        <<record>>
+        +long amount
+        +String currency
+    }
+    class CatalogEntry {
+        <<record>>
+        +SupplierType supplierType
+        +String supplierHotelCode
+        +String hotelName
+        +String supplierRoomTypeCode
+        +String roomTypeName
+        +int maxOccupancy
+    }
+    class StandardRoomOffer {
+        <<record>>
+        +SupplierType supplierType
+        +String supplierHotelCode
+        +String supplierRoomTypeCode
+        +String hotelName
+        +String roomTypeName
+        +int maxOccupancy
+        +boolean breakfastIncluded
+        +Money totalPrice
+        +int availableRooms
+    }
+    CatalogEntry --> SupplierType
+    StandardRoomOffer --> SupplierType
+    StandardRoomOffer --> Money
+```
+
+`CatalogEntry`와 `StandardRoomOffer`는 숙소/객실타입 식별 필드(`supplierHotelCode`, `hotelName`, `supplierRoomTypeCode`, `roomTypeName`, `maxOccupancy`)를 공유하지만 별도 record로 분리했다. `CatalogEntry`는 앱 기동 시 1회만 채워지는 정적 카탈로그이고, `StandardRoomOffer`는 검색 요청마다 매번 새로 조회되는 요금/재고 정보라 갱신 주기와 책임이 다르기 때문이다.
+
 ### 필드별 판단 (근거)
 - **요금**: 한 공급사는 날짜별로 요금을 쪼개서 제공하고, 다른 공급사는 기간 전체 총액만 제공하며 날짜별 분해값을 주지 않는다. 날짜별 단위를 표준으로 삼으면 후자의 데이터를 채울 수 없으므로, 양쪽을 모두 손실 없이 수용할 수 있는 "기간 전체 총액" 단위를 표준으로 선택했다.
 - **세금 기준**: 한 공급사는 세금 포함 총액만 제공하고 세금 금액을 별도로 알려주지 않는다. 세금별도를 표준으로 삼으면 해당 공급사 데이터를 역산할 수 없고, 세금 구성(부가세만인지 다른 항목이 섞였는지)을 스펙만으로 단정할 수 없어 임의 역산은 부정확할 위험이 있다고 판단했다. 세금포함 기준은 양쪽 데이터를 모두 채울 수 있고, 고객이 최종 지불하는 금액 기준 비교가 가능하다.
