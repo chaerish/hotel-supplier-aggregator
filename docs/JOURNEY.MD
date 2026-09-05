@@ -159,7 +159,8 @@
 - 이슈 #5(통합 검색 API 뼈대)를 구현했다. `StaySearchService`가 공급사별로 `StayMappingRepository`에서 보유 숙소 코드를 조회해 그룹핑하고, 50개 단위로 배치를 나눠 `CompletableFuture`로 병렬 호출한 뒤 결과를 병합한다. 공급사 실패는 배치 단위로 잡아 `PartialFailure`로 기록하고 나머지 배치는 계속 진행한다.
 - 전용 스레드풀 Bean(`SearchExecutorConfig`)을 `config` 패키지에 추가했다.
 - `StaySearchServiceTest`를 작성해 그룹핑, 배치 분할(120개 입력 시 3번 호출), 부분 실패 시나리오를 검증했다.
-- HTTP 컨트롤러는 이번 범위에 포함하지 않았다. 이슈 #5 작업 상세에 컨트롤러 항목이 없어서, 서비스 뼈대까지만 구현했다.
+- `StaySearchController`를 추가해 `GET /api/v1/stays/search` 엔드포인트를 구현했다. README/DESIGN.md에 이미 있던 이름(`StaySearchController`, `SearchResponse`)에 맞춰 기존 `SearchResult`를 `SearchResponse`로 이름도 맞췄다.
+- docker-compose로 전체 스택을 띄운 뒤 실제로 curl로 검색 API를 호출해, 정상 응답(두 공급사 결과 병합)과 부분 실패 응답(공급사 B를 장애 모드로 전환) 둘 다 직접 확인했다.
 
 ### 의사결정
 #### [요금 합산 로직: 공통화하지 않고 Mapper 별로 처리]
@@ -188,6 +189,8 @@
 - `WebClient` 클래스가 `spring-boot-starter-webmvc`가 아니라 `spring-webflux` 모듈에 있다는 걸 컴파일 에러를 보고서야 알았다. `spring-boot-starter-webflux`를 추가했는데, MVC(`starter-webmvc`)와 함께 있어도 Spring Boot가 서블릿 방식으로 우선 동작한다는 걸 확인하고 진행했다.
 - `src/test/resources/application.yml`이 메인 설정을 완전히 대체한다는 걸 알고 있었는데도 `supplier.*` 설정을 빠뜨려서, `AggregatorApplicationTests`가 플레이스홀더 해석 실패로 깨졌다. 테스트 설정에도 같은 supplier 설정을 추가해 해결했다.
 - docker-compose로 전체 스택을 띄워 매핑 생성을 검증하던 중, 공급사 A만 매핑이 비어 있는 걸 발견했다. 로그를 보니 `SupplierAAdapter`가 응답 타임아웃으로 실패하고 있었다. 원인은 `mock-supplier` 서비스에 healthcheck가 없어서, `app`이 `postgres`처럼 healthy 상태를 기다리지 않고 컨테이너가 "시작됨(service_started)"인 것만 확인한 뒤 바로 요청을 보냈기 때문이었다. mock-supplier의 Spring Boot가 실제로 요청을 받을 준비가 되기 전에 첫 요청이 가서 응답 타임아웃(3000ms)을 넘겨버린 것. `postgres`와 같은 방식으로 `mock-supplier`에도 curl 기반 healthcheck를 추가하고, `app`의 `depends_on` 조건을 `service_healthy`로 바꿔서 해결했다. 앞서 "2000ms/3000ms는 미검증 값"이라고 문서에 적어둔 우려가 실제로 재현된 사례였는데, 다만 근본 원인은 타임아웃 수치 자체보다 컨테이너 기동 순서 설정 쪽이었다.
+- 이슈 #5의 작업 상세 체크리스트에 컨트롤러 항목이 없다는 이유로 처음엔 `StaySearchController`를 만들지 않고 PR을 올렸다. 그런데 README/DESIGN.md엔 이미 Day 1~2 시점부터 `GET /api/v1/stays/search`, `StaySearchController`, `SearchResponse`라는 이름까지 구체적으로 설계돼 있었다. 이슈 제목 자체도 "통합 검색 **API**"였는데, 체크리스트만 보고 서비스 계층으로 범위를 좁게 잡은 게 실수였다. 이슈 문서의 체크리스트와 프로젝트 전체 설계 문서가 서로 다른 얘기를 하고 있을 때는, 체크리스트만 보지 말고 관련 설계 문서를 같이 대조해야 한다는 걸 다시 확인했다.
+- PR #15를 머지하는 시점과 JOURNEY 정리 커밋(`e63ddd9`)을 push하는 시점이 겹쳐서, 머지된 main에는 그 커밋 이전 상태가 반영됐다. 커밋 자체는 원격 브랜치에 남아 있어 유실은 없었지만, 다음 브랜치에서 내용이 되살아난 것처럼 보이는 걸 보고서야 알아차렸다.
 
 ### AI 활용
 #### 무엇을 물었는지
@@ -196,12 +199,13 @@
 - `SupplierErrorCode` enum에 원본 실패 코드(HTTP 400/503, 공급사 B의 E503 등)를 그대로 담는 int/문자열 code 필드가 필요하지 않은지 물어봤다.
 - JPA 엔티티의 protected 기본 생성자를 `@NoArgsConstructor(access = AccessLevel.PROTECTED)`로 대체할 수 있다는 걸 먼저 제안했다.
 
+- AI가 이슈 #5 체크리스트에 컨트롤러 항목이 없다는 이유로 컨트롤러를 안 만들고 넘어갔을 때, "통합 검색을 고객이 쓰려면 컨트롤러가 있어야 하는데 그게 빠졌다는 게 말이 안 된다"고 지적함.
+
 ##### AI 답변을 어떻게 수용/수정/거부했는지
 - git 상태와 테스트 실행 결과를 직접 눈으로 확인했고, 진행 상황 요약은 사실 확인 용도로만 참고했다.
 - 커밋을 Mapper와 테스트, 스킬 파일로 나누는 제안은 이 저장소의 커밋 단위 규칙과 맞아서 그대로 받아들였고, 커밋 메시지 문구는 실제 작업 내용과 맞는지 직접 검토했다.
 - JOURNEY 날짜가 실제 작업일과 어긋나 있는 걸 발견하고 직접 정정을 요청했다(2026-09-04에서 2026-09-05로).
 - enum에는 표준 분류만 담고, 원본 코드 같은 개별 실패의 상세 정보는 예외 인스턴스의 message에 담아야 한다는 설명을 들었다. 그대로 받아들이기 전에, 나중에 API 응답에 errorCode를 노출할 때 Jackson이 enum을 문자열로 직렬화한다는 점도 직접 확인해 근거로 삼았고, `SupplierAdapterException`을 던질 때 message에 원본 resultCode/HTTP 상태를 포함시키는 방식으로 구현했다.
-- Lombok 제안은 그대로 적용하지 않고, 프로젝트에 아직 없는 의존성이라는 점을 먼저 확인한 뒤 도입 여부를 직접 판단해서 결정했다. 적용 범위도 protected 기본 생성자로만 한정하고, 다른 곳(getter 등)까지 임의로 Lombok화하지 않았다.
 
 ### 참고 자료
 - 없음 
