@@ -14,11 +14,13 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import lombok.AccessLevel;
+import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 @Entity
 @Table(name = "room_type_mapping", uniqueConstraints =
         @UniqueConstraint(columnNames = {"supplier_code", "supplier_hotel_code", "supplier_room_type_code"}))
+@Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RoomTypeMapping {
 
@@ -55,29 +57,5 @@ public class RoomTypeMapping {
         this.supplierHotelCode = supplierHotelCode;
         this.supplierRoomTypeCode = supplierRoomTypeCode;
         this.roomTypeName = roomTypeName;
-    }
-
-    public Long getId() {
-        return id;
-    }
-
-    public StayMapping getStayMapping() {
-        return stayMapping;
-    }
-
-    public SupplierType getSupplierType() {
-        return supplierType;
-    }
-
-    public String getSupplierHotelCode() {
-        return supplierHotelCode;
-    }
-
-    public String getSupplierRoomTypeCode() {
-        return supplierRoomTypeCode;
-    }
-
-    public String getRoomTypeName() {
-        return roomTypeName;
     }
 }
