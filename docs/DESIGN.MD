@@ -285,12 +285,13 @@ sequenceDiagram
   - 검토했다 폐기한 대안: 테스트에도 Testcontainers로 실제 Postgres를 띄우는 방식. 더 정확하게 검증할 수 있지만, 이 규모의 테스트에 매번 컨테이너를 띄우는 비용과 설정 복잡도가 더 크다고 판단해 보류했다.
 
 ### Docker Compose로 세 개 서비스 구성
-- 선택: `postgres`(5432), `mock-supplier`(9191, 같은 이미지를 `SPRING_PROFILES_ACTIVE=mock`으로 재사용), `app`(8080, `postgres`와 `mock-supplier`가 뜬 뒤에 시작).
+- 선택: `postgres`(컨테이너 내부 5432, 호스트 5433), `mock-supplier`(9191, 같은 이미지를 `SPRING_PROFILES_ACTIVE=mock`으로 재사용), `app`(8080, `postgres`와 `mock-supplier`가 모두 healthy 상태가 된 뒤에 시작).
 - 근거: 저장소를 처음 열어보는 사람이 별도 설치 없이 `docker compose up --build` 한 줄로, 표준 모델 정규화부터 매핑, 통합 검색, 장애 격리까지 실제로 눌러볼 수 있어야 한다고 판단했다.
 - mock-supplier도 같은 이미지를 재사용한다. 별도 Dockerfile을 만들지 않아서 빌드 스크립트가 중복되지 않는다.
   - 트레이드오프: Mock 전용으로 띄울 때도 본체 앱과 같은 의존성(JPA, Validation 등)이 포함된 이미지를 그대로 쓴다. 이 규모에서는 이미지를 가볍게 만드는 것보다 빌드 스크립트를 하나로 유지하는 단순함이 더 낫다고 판단했다.
-- `app` 서비스는 `depends_on`에서 `postgres`를 `condition: service_healthy`로 기다린다. 단순 `depends_on`은 컨테이너가 시작된 순서만 보장하고, 그 안의 DB가 실제로 연결 가능한 상태인지는 보장하지 않기 때문이다.
+- `app` 서비스는 `depends_on`에서 `postgres`와 `mock-supplier`를 둘 다 `condition: service_healthy`로 기다린다. 단순 `depends_on`(기본값 또는 `service_started`)은 컨테이너가 시작된 순서만 보장하고, 그 안의 프로세스가 실제로 요청을 받을 수 있는 상태인지는 보장하지 않기 때문이다. 실제로 mock-supplier에 healthcheck가 없었을 때, 앱 기동 직후 매핑 생성 로직이 아직 완전히 뜨지 않은 mock-supplier에 요청을 보내 타임아웃이 난 적이 있어 healthcheck를 추가했다 (JOURNEY.MD Day 3 참조).
 - Mock Supplier 포트는 처음에 9090으로 정했으나, 로컬 환경에서 다른 프로세스가 9090을 이미 점유하고 있어 충돌이 발생했다. 9191로 바꿔 이 문제를 피했다.
+- postgres 호스트 포트도 로컬에 이미 다른 PostgreSQL이 5432를 쓰고 있는 경우와 충돌해서, 컨테이너 내부는 5432를 유지한 채 호스트 노출 포트만 5433으로 바꿨다 (컨테이너 간 통신은 영향 없음).
 ---
 
 ## 선택 구현 (3.3, 진행한 것만 작성)

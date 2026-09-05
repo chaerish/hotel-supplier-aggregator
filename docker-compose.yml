@@ -19,6 +19,11 @@ services:
       SPRING_PROFILES_ACTIVE: mock
     ports:
       - "9191:9191"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9191/a/v1/hotels"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   app:
     build: .
@@ -26,7 +31,7 @@ services:
       postgres:
         condition: service_healthy
       mock-supplier:
-        condition: service_started
+        condition: service_healthy
     environment:
       DB_HOST: postgres
       DB_PORT: 5432
