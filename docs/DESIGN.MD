@@ -253,18 +253,20 @@ sequenceDiagram
 - FR-5 부분 실패 허용 원칙을 배치 단위에도 동일하게 적용한다.
 
 ---
-## 5. 연동 견고성습
+## 5. 연동 견고성
 
 ### 타임아웃
-- 연결 타임아웃: ___ms, 근거:
-- 응답 타임아웃: ___ms, 근거:
+- 연결 타임아웃: 2000ms, 응답 타임아웃: 3000ms (`WebClientConfig`, `SUPPLIER_CONNECT_TIMEOUT_MS`/`SUPPLIER_RESPONSE_TIMEOUT_MS`로 환경변수 오버라이드 가능)
+- 근거: 실제 공급사 응답 시간을 관찰할 수 없는 Mock 기반 개발 단계라, 이 수치 자체를 뒷받침할 데이터는 없다. 검색 API가 사용자를 기다리게 하는 동기 호출이라는 점만 고려해, 공급사 하나가 응답을 안 줘도 요청 전체가 과도하게 묶이지 않도록 보수적으로 짧게 잡은 미검증 임시값이다.
+- 검증한 것과 검증 못한 것: 타임아웃이 지나면 `SupplierAdapterException(TIMEOUT)`으로 정확히 변환되는지는 테스트(`SupplierAAdapterTest`, `SupplierBAdapterTest`의 타임아웃 케이스)로 확인했다. 다만 2000ms/3000ms라는 구체적 수치가 적정한지는 검증하지 못했고, 실제 공급사 연동 시 응답 시간 분포를 관찰한 뒤 조정이 필요하다.
 
 ### 부분 실패 허용
-- 구현 방식:
+- 구현 방식: 미구현 (통합 검색 서비스에서 처리 예정, 4번 항목 참조)
 
 ### 실패 판정 통일
-- A: HTTP 4xx/5xx → 실패
-- B: HTTP 200 + resultCode != '0000' → 실패로 정규화하는 지점:
+- A: HTTP 4xx/5xx → 실패. `SupplierAAdapter`가 `WebClientResponseException`을 잡아 `SupplierAdapterException(TEMPORARILY_UNAVAILABLE)`로 변환한다.
+- B: HTTP 200 + resultCode != '0000' → 실패. `SupplierBAdapter`가 응답 파싱 후 `resultCode`를 직접 확인해 같은 예외로 변환한다.
+- 두 경우 모두, 응답 자체를 못 받은 경우(`WebClientRequestException`, 연결/응답 타임아웃 포함)는 `SupplierAdapterException(TIMEOUT)`으로, 그 외 예기치 못한 예외는 `SupplierAdapterException(UNKNOWN)`으로 변환한다.
 ---
 
 ## 6. Mock Supplier 구성

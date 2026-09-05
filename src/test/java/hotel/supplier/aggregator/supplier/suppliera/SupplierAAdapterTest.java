@@ -9,12 +9,15 @@ import hotel.supplier.aggregator.supplier.error.SupplierErrorCode;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -96,6 +99,30 @@ class SupplierAAdapterTest {
                 .isInstanceOf(SupplierAdapterException.class)
                 .satisfies(e -> assertThat(((SupplierAdapterException) e).errorCode())
                         .isEqualTo(SupplierErrorCode.TEMPORARILY_UNAVAILABLE));
+    }
+
+    @Test
+    void 응답_타임아웃이_지나면_SupplierAdapterException으로_변환된다() throws IOException {
+        server.createContext("/a/v1/availability", exchange -> {
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            respond(exchange, 200, "{\"items\":[]}");
+        });
+        WebClient shortTimeoutWebClient = WebClient.builder()
+                .baseUrl("http://localhost:" + server.getAddress().getPort())
+                .clientConnector(new ReactorClientHttpConnector(
+                        HttpClient.create().responseTimeout(Duration.ofMillis(100))))
+                .build();
+        SupplierAAdapter shortTimeoutAdapter = new SupplierAAdapter(shortTimeoutWebClient);
+
+        assertThatThrownBy(() -> shortTimeoutAdapter.fetchAvailability(
+                List.of("A-1"), LocalDate.of(2026, 1, 1), LocalDate.of(2026, 1, 2), 2, 0))
+                .isInstanceOf(SupplierAdapterException.class)
+                .satisfies(e -> assertThat(((SupplierAdapterException) e).errorCode())
+                        .isEqualTo(SupplierErrorCode.TIMEOUT));
     }
 
     private void respond(HttpExchange exchange, int status, String body) throws IOException {
