@@ -125,10 +125,10 @@
 - [x] Supplier A/B DTO를 표준 모델로 변환하는 Mapper 클래스 구현
 - [x] Mapper 단위 테스트 작성
 - [x] 미커밋 상태였던 작업을 단위별로 나눠 커밋
-- [ ] SupplierErrorCode enum과 SupplierAdapterException 작성 (공급사별 실패 판정 통일용)
-- [ ] SupplierAAdapter와 요청/응답 DTO(package-private) 작성
-- [ ] SupplierBAdapter와 요청/응답 DTO(package-private) 작성 (HTTP 200 + 본문 코드 실패 케이스 처리 포함)
-- [ ] WebClientConfig 작성 (연결/응답 타임아웃 임시값 적용)
+- [x] SupplierErrorCode enum과 SupplierAdapterException 작성 (공급사별 실패 판정 통일용)
+- [x] SupplierAAdapter와 요청/응답 DTO(package-private) 작성
+- [x] SupplierBAdapter와 요청/응답 DTO(package-private) 작성 (HTTP 200 + 본문 코드 실패 케이스 처리 포함)
+- [x] WebClientConfig 작성 (연결/응답 타임아웃 임시값 적용)
 - [ ] search 패키지 구조 잡기
 - [ ] StaySearchService에 List<SupplierAdapter> 자동 주입 설정
 - [ ] 매핑 테이블 조회 결과를 공급사별로 그룹핑하는 로직 작성
@@ -142,25 +142,41 @@
 - 재고는 기간 중 최솟값을 노출하도록 두 Mapper에 동일하게 구현했다. Day 1에서 DESIGN.md 1번 항목에 정리한 결정을 실제 코드에 반영한 것이다.
 - `SupplierAMapperTest`, `SupplierBMapperTest`를 작성해 요금 합산과 재고 최솟값 계산 로직을 검증했다.
 - 커밋 규칙에 맞춰 Mapper와 테스트를 한 커밋으로, 스킬 파일 추가를 별도 커밋으로 나눠 정리했다.
+- Day 2에서 결정한 대로 `SupplierErrorCode`(TEMPORARILY_UNAVAILABLE, TIMEOUT, UNKNOWN)와 `SupplierAdapterException`을 구현했다.
+- `SupplierAAdapter`, `SupplierBAdapter`를 구현해 `WebClient`로 Mock Supplier A/B를 실제로 호출하고, 응답 DTO를 각 Mapper로 표준 모델로 변환하도록 연결했다.
+- `WebClientConfig`를 작성해 공급사별 `WebClient` 빈에 연결/응답 타임아웃(임시값)을 적용했다.
+- `SupplierAAdapterTest`, `SupplierBAdapterTest`를 추가해 성공, HTTP 실패, resultCode 실패 세 가지 경로를 실제 HTTP 요청으로 검증했다.
 
 ### 의사결정
 #### [요금 합산 로직: 공통화하지 않고 Mapper 별로 처리]
 공급사 A는 일자별 요금 배열을 제공해 합산이 필요하고, 공급사 B는 이미 합산된 총액을 제공한다. 두 응답 구조가 근본적으로 달라서, 공통 합산 로직으로 추상화하기보다 각 Mapper 가 자신의 응답 구조에 맞게 직접 계산하도록 두었다.
   - 검토했다 폐기한 대안: 공통 합산 유틸리티 메서드 추출. 공급사가 2개뿐이고 입력 구조(일자별 배열과 단일 총액)가 서로 달라서, 지금 억지로 공통화하면 분기 처리만 늘어날 것 같아 보류했다. 공급사가 추가되는 시점에 다시 검토하기로 했다.
 
+#### [어댑터 실패 유형 구분: WebClientResponseException vs WebClientRequestException]
+공급사로부터 응답은 받았지만 상태 코드가 실패인 경우(`WebClientResponseException`)와 응답 자체를 못 받은 경우(연결/응답 타임아웃 등, `WebClientRequestException`)를 구분해서 각각 `TEMPORARILY_UNAVAILABLE`과 `TIMEOUT`으로 매핑했다. 그 외 예외는 `UNKNOWN`으로 분류했다.
+  - 검토했다 폐기한 대안: reactor-netty의 구체적 예외 타입(`ReadTimeoutException`, `ConnectTimeoutException` 등)을 직접 catch하는 방식. Spring이 이미 `WebClientRequestException`으로 감싸서 제공하므로, 더 하위 구현체에 직접 의존하지 않는 이 방식이 더 안정적이라고 판단해 폐기.
+
+#### [어댑터 테스트에 Mock 라이브러리 대신 JDK 내장 HttpServer 사용]
+실제 HTTP 요청/응답 경로를 검증하고 싶었지만, WireMock 같은 별도 테스트 의존성을 추가하는 대신 JDK에 내장된 `com.sun.net.httpserver.HttpServer`로 가짜 서버를 띄워 검증했다.
+  - 검토했다 폐기한 대안: WireMock 도입. 테스트 몇 개를 위해 새 의존성을 추가하는 것보다, JDK 내장 기능으로 같은 검증이 충분히 가능하다고 판단해 보류했다.
+
 ### 막힌 지점 / 시행착오
 - 재고 최솟값 계산 로직이 두 Mapper 에 거의 같은 형태로 중복돼 있다(설명 주석까지 동일). 공통 메서드로 뽑을지 고민했지만, 각 Mapper 가 받는 컬렉션 타입(`AvailabilityItem.dailyRates()`와 `SearchItem.inventory()`)이 서로 달라 이를 묶으려면 별도 인터페이스가 필요했다. 
 - 지금 시점에는 그 정도 추상화가 과하다고 판단해 중복을 그대로 남겼다. 하지만 추후 추상화 할 의향은 있다.
+- `WebClient` 클래스가 `spring-boot-starter-webmvc`가 아니라 `spring-webflux` 모듈에 있다는 걸 컴파일 에러를 보고서야 알았다. `spring-boot-starter-webflux`를 추가했는데, MVC(`starter-webmvc`)와 함께 있어도 Spring Boot가 서블릿 방식으로 우선 동작한다는 걸 확인하고 진행했다.
+- `src/test/resources/application.yml`이 메인 설정을 완전히 대체한다는 걸 알고 있었는데도 `supplier.*` 설정을 빠뜨려서, `AggregatorApplicationTests`가 플레이스홀더 해석 실패로 깨졌다. 테스트 설정에도 같은 supplier 설정을 추가해 해결했다.
 
 ### AI 활용
 #### 무엇을 물었는지
 - 지금까지 진행 상황을 확인해달라고 물었다. 어떤 파일이 이미 커밋됐고 어떤 파일이 아직 안 됐는지, 테스트가 통과하는지를 점검해달라고 요청했다.
 - 미커밋 상태인 Mapper/테스트 파일과 스킬 파일을 커밋 단위 규칙에 맞게 나눠서 커밋해달라고 요청했다.
+- `SupplierErrorCode` enum에 원본 실패 코드(HTTP 400/503, 공급사 B의 E503 등)를 그대로 담는 int/문자열 code 필드가 필요하지 않은지 물어봤다.
 
 ##### AI 답변을 어떻게 수용/수정/거부했는지
 - git 상태와 테스트 실행 결과를 직접 눈으로 확인했고, 진행 상황 요약은 사실 확인 용도로만 참고했다.
 - 커밋을 Mapper와 테스트, 스킬 파일로 나누는 제안은 이 저장소의 커밋 단위 규칙과 맞아서 그대로 받아들였고, 커밋 메시지 문구는 실제 작업 내용과 맞는지 직접 검토했다.
 - JOURNEY 날짜가 실제 작업일과 어긋나 있는 걸 발견하고 직접 정정을 요청했다(2026-09-04에서 2026-09-05로).
+- enum에는 표준 분류만 담고, 원본 코드 같은 개별 실패의 상세 정보는 예외 인스턴스의 message에 담아야 한다는 설명을 들었다. 그대로 받아들이기 전에, 나중에 API 응답에 errorCode를 노출할 때 Jackson이 enum을 문자열로 직렬화한다는 점도 직접 확인해 근거로 삼았고, `SupplierAdapterException`을 던질 때 message에 원본 resultCode/HTTP 상태를 포함시키는 방식으로 구현했다.
 
 ### 참고 자료
 - 없음 
