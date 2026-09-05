@@ -10,3 +10,11 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+
+supplier:
+  a:
+    base-url: ${SUPPLIER_A_BASE_URL:http://localhost:9191}
+  b:
+    base-url: ${SUPPLIER_B_BASE_URL:http://localhost:9191}
+  connect-timeout-ms: ${SUPPLIER_CONNECT_TIMEOUT_MS:2000}
+  response-timeout-ms: ${SUPPLIER_RESPONSE_TIMEOUT_MS:3000}

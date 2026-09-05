@@ -7,3 +7,11 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create-drop
+
+supplier:
+  a:
+    base-url: http://localhost:9191
+  b:
+    base-url: http://localhost:9191
+  connect-timeout-ms: 2000
+  response-timeout-ms: 3000

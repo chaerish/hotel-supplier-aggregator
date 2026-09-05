@@ -33,5 +33,7 @@ services:
       DB_NAME: aggregator
       DB_USERNAME: aggregator
       DB_PASSWORD: aggregator
+      SUPPLIER_A_BASE_URL: http://mock-supplier:9191
+      SUPPLIER_B_BASE_URL: http://mock-supplier:9191
     ports:
       - "8080:8080"
