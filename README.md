@@ -64,6 +64,9 @@ curl -X POST 'http://localhost:9191/control/a/mode?value=normal'        # 정상
 curl "http://localhost:8080/api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&children=0"
 ```
 
+### API 문서 (Swagger UI)
+앱 기동 후 브라우저에서 http://localhost:8080/swagger-ui/index.html 접속
+
 ### DB 접속 (PostgreSQL)
 ```bash
 docker compose exec postgres psql -U aggregator -d aggregator
@@ -121,14 +124,23 @@ docker compose exec postgres psql -U aggregator -d aggregator
 src/main/java/.../
 ├── domain/           # 표준 숙박 상품 모델
 ├── mapping/          # 공급사 코드 ↔ 내부 식별자 매핑
+│   ├── entity/       # StayMapping, RoomTypeMapping
+│   ├── repository/
+│   └── service/      # MappingRefreshService, 앱 기동 시 1회 실행되는 MappingStartupInitializer
 ├── supplier/
 │   ├── SupplierAdapter.java  # 공통 인터페이스
 │   ├── suppliera/    # Supplier A 전용 요청/응답 DTO + 변환
-│   └── supplierb/    # Supplier B 전용 요청/응답 DTO + 변환
+│   ├── supplierb/    # Supplier B 전용 요청/응답 DTO + 변환
+│   └── error/        # SupplierErrorCode, SupplierAdapterException
 ├── search/           # 통합 검색 서비스, 병렬 조회, 병합
-├── config/           # WebClient 등 설정
+│   ├── controller/   # StaySearchController
+│   ├── service/      # StaySearchService
+│   └── dto/          # SearchResponse, PartialFailure
+├── config/           # WebClient, 검색용 Executor 등 설정
 └── mock/             # Mock Supplier 컨트롤러
 ```
+
+`mapping`, `search`는 계층(entity/repository/service/controller/dto)별로 나눴다. `supplier`는 공급사(A/B)별로 나눠 DTO를 package-private으로 캡슐화하는 게 목적이라 계층 기준이 아니다 (DESIGN.md 3번 참조).
 
 ## 핵심 설계 결정
 
@@ -186,5 +198,5 @@ src/main/java/.../
 | ⑤ Mock Supplier 구성          | 완료   | |
 | 선택: 재시도 정책                  | 미완료  | |
 | 선택: 서킷 브레이커                 | 미완료  | |
-| 선택: API 문서 자동화 (Swagger)    |      | |
+| 선택: API 문서 자동화 (Swagger)    | 완료   | springdoc-openapi, `/swagger-ui/index.html` |
  

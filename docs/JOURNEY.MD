@@ -161,6 +161,8 @@
 - `StaySearchServiceTest`를 작성해 그룹핑, 배치 분할(120개 입력 시 3번 호출), 부분 실패 시나리오를 검증했다.
 - `StaySearchController`를 추가해 `GET /api/v1/stays/search` 엔드포인트를 구현했다. README/DESIGN.md에 이미 있던 이름(`StaySearchController`, `SearchResponse`)에 맞춰 기존 `SearchResult`를 `SearchResponse`로 이름도 맞췄다.
 - docker-compose로 전체 스택을 띄운 뒤 실제로 curl로 검색 API를 호출해, 정상 응답(두 공급사 결과 병합)과 부분 실패 응답(공급사 B를 장애 모드로 전환) 둘 다 직접 확인했다.
+- `mapping`, `search` 패키지를 계층별(entity/repository/service/controller/dto)로 재구성한 내용이 README 패키지 구조 다이어그램에 반영이 안 돼 있어서 갱신했다. `supplier`는 계층이 아니라 공급사별 기준을 쓰는 이유도 한 줄 추가했다.
+- 이슈 #17로 Swagger(OpenAPI) 연동을 진행했다. `springdoc-openapi-starter-webmvc-ui`를 추가하고, API 제목/설명을 담은 `OpenApiConfig`를 작성했다. docker-compose로 띄워서 `/swagger-ui/index.html`과 `/v3/api-docs` 둘 다 정상 동작하는 것을 확인했다.
 
 ### 의사결정
 #### [요금 합산 로직: 공통화하지 않고 Mapper 별로 처리]
@@ -183,6 +185,10 @@
 `Executors.newFixedThreadPool(10)`을 전용 Executor로 등록했다. 공급사 2개, 배치 수가 적은 지금 규모에서는 동시성 요구가 크지 않아 크기를 예측 가능하게 고정하는 쪽이 단순하다고 판단했다.
   - 검토했다 폐기한 대안: 가상 스레드(`Executors.newVirtualThreadPerTaskExecutor()`). Java 21의 가상 스레드는 이런 I/O 바운드 블로킹 호출(WebClient의 `.block()`)에 잘 맞지만, 지금 규모에서는 이점이 크지 않고 프로젝트 전체가 아직 새 동시성 모델을 검증 없이 쓰기보다 예측 가능한 고정 스레드풀을 우선하는 기조였어서 보류했다.
 
+#### [springdoc-openapi 버전: 3.1.0]
+Spring Boot 4.1.1을 쓰고 있는데, springdoc-openapi 2.x는 Spring Boot 3.x 대상이라 그대로 추가하면 버전이 안 맞을 위험이 있었다. 검색해서 springdoc-openapi 3.x부터 Spring Boot 4를 지원한다는 걸 확인하고, 그중 안정 버전인 3.1.0을 추가했다.
+  - 검증: 의존성 추가 후 컴파일과 전체 테스트가 통과했고, docker-compose로 띄워서 `/swagger-ui/index.html`(200 응답)과 `/v3/api-docs`(우리 엔드포인트가 정확히 잡힌 OpenAPI 스펙)를 직접 확인했다.
+
 ### 막힌 지점 / 시행착오
 - 재고 최솟값 계산 로직이 두 Mapper 에 거의 같은 형태로 중복돼 있다(설명 주석까지 동일). 공통 메서드로 뽑을지 고민했지만, 각 Mapper 가 받는 컬렉션 타입(`AvailabilityItem.dailyRates()`와 `SearchItem.inventory()`)이 서로 달라 이를 묶으려면 별도 인터페이스가 필요했다. 
 - 지금 시점에는 그 정도 추상화가 과하다고 판단해 중복을 그대로 남겼다. 하지만 추후 추상화 할 의향은 있다.
@@ -196,12 +202,14 @@
 - 미커밋 상태인 Mapper/테스트 파일과 스킬 파일을 커밋 단위 규칙에 맞게 나눠서 커밋해달라고 요청했다.
 - `SupplierErrorCode` enum에 원본 실패 코드(HTTP 400/503, 공급사 B의 E503 등)를 그대로 담는 int/문자열 code 필드가 필요하지 않은지 물어봤다.
 - JPA 엔티티의 protected 기본 생성자를 `@NoArgsConstructor(access = AccessLevel.PROTECTED)`로 대체할 수 있다는 걸 먼저 제안했다.
+- Spring Boot 4.1.1과 호환되는 springdoc-openapi 버전을 웹 검색으로 확인해달라고 요청했다.
 
 ##### AI 답변을 어떻게 수용/수정/거부했는지
 - git 상태와 테스트 실행 결과를 직접 눈으로 확인했고, 진행 상황 요약은 사실 확인 용도로만 참고했다.
 - 커밋을 Mapper와 테스트, 스킬 파일로 나누는 제안은 이 저장소의 커밋 단위 규칙과 맞아서 그대로 받아들였고, 커밋 메시지 문구는 실제 작업 내용과 맞는지 직접 검토했다.
 - JOURNEY 날짜가 실제 작업일과 어긋나 있는 걸 발견하고 직접 정정을 요청했다(2026-09-04에서 2026-09-05로).
 - enum에는 표준 분류만 담고, 원본 코드 같은 개별 실패의 상세 정보는 예외 인스턴스의 message에 담아야 한다는 설명을 들었다. 그대로 받아들이기 전에, 나중에 API 응답에 errorCode를 노출할 때 Jackson이 enum을 문자열로 직렬화한다는 점도 직접 확인해 근거로 삼았고, `SupplierAdapterException`을 던질 때 message에 원본 resultCode/HTTP 상태를 포함시키는 방식으로 구현했다.
+- springdoc-openapi 버전 답변(3.x부터 Spring Boot 4 지원, 3.1.0 권장)을 그대로 받아들이지 않고, 실제로 의존성을 추가해 컴파일과 테스트를 통과시킨 뒤 docker-compose로 Swagger UI가 진짜 뜨는지까지 확인한 다음 채택했다.
 
 ### 참고 자료
 - 없음 
