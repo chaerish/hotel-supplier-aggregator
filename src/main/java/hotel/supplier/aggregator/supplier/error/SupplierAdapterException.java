@@ -1,4 +1,4 @@
-package hotel.supplier.aggregator.supplier;
+package hotel.supplier.aggregator.supplier.error;
 
 import hotel.supplier.aggregator.domain.SupplierType;
 
