@@ -49,7 +49,7 @@ class StaySearchServiceTest {
         StaySearchService service = new StaySearchService(
                 List.of(adapterA, adapterB), stayMappingRepository, directExecutor);
 
-        SearchResult result = service.search(checkIn, checkOut, 2, 0);
+        SearchResponse result = service.search(checkIn, checkOut, 2, 0);
 
         assertThat(result.offers()).containsExactly(offerA);
         assertThat(result.partialFailures()).isEmpty();
@@ -95,7 +95,7 @@ class StaySearchServiceTest {
         StaySearchService service = new StaySearchService(
                 List.of(failingAdapter, workingAdapter), stayMappingRepository, directExecutor);
 
-        SearchResult result = service.search(checkIn, checkOut, 2, 0);
+        SearchResponse result = service.search(checkIn, checkOut, 2, 0);
 
         assertThat(result.offers()).containsExactly(offerB);
         assertThat(result.partialFailures()).hasSize(1);

@@ -36,7 +36,7 @@ public class StaySearchService {
         this.supplierSearchExecutor = supplierSearchExecutor;
     }
 
-    public SearchResult search(LocalDate checkIn, LocalDate checkOut, int adults, int children) {
+    public SearchResponse search(LocalDate checkIn, LocalDate checkOut, int adults, int children) {
         List<CompletableFuture<BatchResult>> futures = new ArrayList<>();
         for (SupplierAdapter adapter : adapters) {
             List<String> hotelCodes = stayMappingRepository.findBySupplierType(adapter.getSupplierType()).stream()
@@ -58,7 +58,7 @@ public class StaySearchService {
                 partialFailures.add(result.failure());
             }
         }
-        return new SearchResult(offers, partialFailures);
+        return new SearchResponse(offers, partialFailures);
     }
 
     private BatchResult fetchBatch(
