@@ -16,34 +16,47 @@
 
 ## 주요 기능
 - 서로 다른 형식의 외부 공급사 응답을 하나의 표준 숙박 상품 모델로 정규화한다.
-- 날짜·인원 조건으로 여러 공급사를 동시에(병렬) 조회하는 통합 검색 API
+- 날짜와 인원 조건으로 여러 공급사를 동시에(병렬) 조회하는 통합 검색 API
 - 공급사 코드와 내부 식별자를 매핑해, 지역 검색을 지원하지 않는 공급사 API를 조회 가능한 형태로 변환
-- 일부 공급사 장애·무응답 시에도 나머지 공급사 결과로 정상 응답하는 부분 실패 허용 
+- 일부 공급사 장애나 무응답 시에도 나머지 공급사 결과로 정상 응답하는 부분 실패 허용 
 - 신규 공급사 추가 시 변경 범위를 최소화하는 어댑터 계층 분리
 
 ## 실행 방법
 
-### 요구 사항
-- JDK 21+
-- (Gradle Wrapper 포함되어 있어 별도 설치 불필요)
+### Docker Compose로 한 번에 실행 (권장)
+클론 후 별도 설치 없이 아래 한 줄이면 PostgreSQL, Mock Supplier, 본체 앱이 함께 뜹니다.
+```bash
+docker compose up --build
+```
+- `postgres`: 5432 포트
+- `mock-supplier`: 9191 포트 (`SPRING_PROFILES_ACTIVE=mock`으로 같은 이미지를 재사용)
+- `app`: 8080 포트, `postgres`와 `mock-supplier`가 기동된 뒤에 시작됨
 
-### 빌드 및 실행
+### 로컬에서 직접 실행
+#### 요구 사항
+- JDK 21+
+- 로컬에 접속 가능한 PostgreSQL (또는 `docker compose up postgres`만 따로 실행)
+
+#### 빌드 및 실행
 ```bash
 ./gradlew clean build
 ./gradlew bootRun
 ```
+접속 정보는 환경변수로 덮어쓸 수 있습니다 (`DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USERNAME`, `DB_PASSWORD`). 기본값은 `localhost:5432/aggregator`입니다.
 
 ### Mock Supplier 서버
 ```bash
-# 예: 9090 포트에서 Mock Supplier 기동
-./gradlew :mock-supplier:bootRun
+# "mock" 프로필로 기동하면 MockSupplierController만 활성화되고 9191 포트에서 뜬다.
+# 본체 애플리케이션(8080)과 분리해, 어댑터가 자기 자신을 호출하는 상황을 방지한다.
+# (DB 연결이 필요 없도록 이 프로필에서는 DataSource/JPA 자동 설정도 꺼둔다.)
+./gradlew bootRun --args='--spring.profiles.active=mock'
 ```
 
 ### 장애 모드 전환 (Mock 조작)
 ```bash
-curl -X POST 'http://localhost:9090/control/a/mode?value=no-response'   # Supplier A 무응답
-curl -X POST 'http://localhost:9090/control/b/mode?value=error'         # Supplier B 장애 (200+E503)
-curl -X POST 'http://localhost:9090/control/a/mode?value=normal'        # 정상으로 복귀
+curl -X POST 'http://localhost:9191/control/a/mode?value=no-response'   # Supplier A 무응답
+curl -X POST 'http://localhost:9191/control/b/mode?value=error'         # Supplier B 장애 (200+E503)
+curl -X POST 'http://localhost:9191/control/a/mode?value=normal'        # 정상으로 복귀
 ```
 
 ### 통합 검색 API 호출 예시
@@ -51,19 +64,19 @@ curl -X POST 'http://localhost:9090/control/a/mode?value=normal'        # 정상
 curl "http://localhost:8080/api/v1/stays/search?checkIn=2026-09-01&checkOut=2026-09-04&adults=2&children=0"
 ```
 
-### DB 콘솔 (H2 사용)
-```
-http://localhost:8080/h2-console
+### DB 접속 (PostgreSQL)
+```bash
+docker compose exec postgres psql -U aggregator -d aggregator
 ```
 
 ## 기술 스택 
 | 항목 | 선택 | 비고                                                                                                                                                                    |
 |---|---|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Language | Java 21 | 	팀/개인 숙련도가 가장 높은 언어로 빠르게 구현에 집중하기 위해 선택. Record, 패턴 매칭 등 최신 문법으로 DTO·표준 모델을 간결하게 작성 가능                                                                                |
+| Language | Java 21 | 	팀/개인 숙련도가 가장 높은 언어로 빠르게 구현에 집중하기 위해 선택. Record, 패턴 매칭 등 최신 문법으로 DTO와 표준 모델을 간결하게 작성 가능                                                                                |
 | Framework | Spring Boot 4.1 |                                                                                                                                                                       |
 | Build | Gradle | 의존성 관리와 빌드 스크립트 작성이 Maven보다 유연하고, Spring Initializr 기본 조합과의 호환성이 좋음                                                                                                   |
-| Database | H2 | 별도 설치 없이 인메모리로 즉시 구동 가능해 과제 검증 환경에 적합. 매핑 테이블 저장이라는 단순한 용도로 사용                                                                                                        |
-| HTTP Client | Spring WebClient | 다수 공급사를 동시에(병렬) 호출하고 타임아웃·재시도를 세밀하게 제어해야 하는 이 과제의 요구에 맞음. RestClient/RestTemplate은 비동기·병렬 호출 제어가 상대적으로 번거로워 배제. MVC(Tomcat) 위에서 WebClient만 사용하고 WebFlux 전면 도입은 하지 않음. |
+| Database | PostgreSQL (Docker Compose로 함께 기동) | 매핑 테이블 저장 용도. 클론한 사람이 별도 설치 없이 `docker compose up`만으로 실제 RDB와 함께 바로 실행해볼 수 있도록 함. 테스트는 속도를 위해 H2 인메모리를 별도로 사용 (`src/test/resources/application.yml`)                                                                                                        |
+| HTTP Client | Spring WebClient | 다수 공급사를 동시에(병렬) 호출하고 타임아웃과 재시도를 세밀하게 제어해야 하는 이 구현의 요구에 맞음. RestClient/RestTemplate은 비동기, 병렬 호출 제어가 상대적으로 번거로워 배제. MVC(Tomcat) 위에서 WebClient만 사용하고 WebFlux 전면 도입은 하지 않음. |
 
 
 ## 아키텍처 개요
@@ -77,7 +90,7 @@ http://localhost:8080/h2-console
    │
    ├─ 1. mapping DB 조회 → 보유 숙소를 공급사별로 그룹핑, 50개 단위 배치 분할
    │
-   ├─ 2. 배치별·공급사별 호출을 CompletableFuture로 병렬 실행
+   ├─ 2. 배치별, 공급사별 호출을 CompletableFuture로 병렬 실행
    │        ┌─────────────────────┐        ┌─────────────────────┐
    │        │  SupplierAAdapter   │        │  SupplierBAdapter   │
    │        │  (WebClient 호출)    │        │  (WebClient 호출)    │
@@ -129,14 +142,14 @@ src/main/java/.../
 | 요금 | 요청한 숙박 기간 전체의 세금 포함 총액 |
 | 재고 | 날짜별 잔여 객실 수 |
 
-- **요금:** "기간 전체 총액·세금 포함" 기준으로 통일했습니다. 한 공급사가 날짜별 분해 요금과 세금별도 금액을 제공하지 않아, 양쪽 공급사 데이터를 모두 손실 없이 수용할 수 있는 단위를 선택했습니다.
+- **요금:** "기간 전체 총액, 세금 포함" 기준으로 통일했습니다. 한 공급사가 날짜별 분해 요금과 세금별도 금액을 제공하지 않아, 양쪽 공급사 데이터를 모두 손실 없이 수용할 수 있는 단위를 선택했습니다.
 - **예약 가능 여부:** 연박 기간 중 하루라도 재고가 0이면 예약 불가로 판정하고, 노출 수량은 기간 중 최소 잔여 객실 수로 표시합니다.
 - **조식 포함 여부:** 요금과 별개의 boolean 속성으로 유지해, 요금 차이의 숨은 원인이 드러나게 했습니다.
 - 날짜별 세금 상세 내역, 서로 다른 공급사 간 동일 숙소 자동 병합은 표준 모델에서 제외 (후자는 선택 구현 항목으로 분리).
 
 ### 2. 공급사 코드 ↔ 내부 식별자 매핑
 
-- **매핑:** 앱 기동 시 1회 생성합니다. 숙소 목록은 자주 바뀌지 않는 정적 정보인 반면, 재고·요금은 검색 시점마다 실시간 조회하는 방식으로 성격 차이를 반영했습니다. (갱신 로직은 호출부와 분리해, 추후 스케줄러로 확장 가능한 구조입니다.)
+- **매핑:** 앱 기동 시 1회 생성합니다. 숙소 목록은 자주 바뀌지 않는 정적 정보인 반면, 재고와 요금은 검색 시점마다 실시간 조회하는 방식으로 성격 차이를 반영했습니다. (갱신 로직은 호출부와 분리해, 추후 스케줄러로 확장 가능한 구조입니다.)
 - **객실 타입 코드** : 숙소 안에서만 유일하므로, 매핑 키에 숙소 코드를 함께 포함시켰습니다.
 - **일부 공급사의 매핑 생성이 실패해도 앱은 정상 기동**하며, 성공한 공급사만 매핑을 채웁니다.
 
@@ -149,7 +162,7 @@ src/main/java/.../
 ### 4. 통합 검색 API
 
 - **예약 불가 상품**: 응답에서 제외하지 않고 `availableRooms: 0`으로 그대로 노출합니다. 클라이언트가 이 값으로 표시 방식을 직접 결정할 수 있게 하기 위함입니다.
-- **50개 초과 숙소**: 배치로 나눠 여러 번 조회하며, 배치 간·공급사 간 호출은 `CompletableFuture` + 전용 스레드풀로 병렬 실행합니다. (WebClient는 유지하되 WebFlux 전면 도입은 하지 않는 방향)
+- **50개 초과 숙소**: 배치로 나눠 여러 번 조회하며, 배치 간과 공급사 간 호출은 `CompletableFuture` + 전용 스레드풀로 병렬 실행합니다. (WebClient는 유지하되 WebFlux 전면 도입은 하지 않는 방향)
 
 ## 5. 연동 견고성
 추후 작성 예정 
