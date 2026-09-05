@@ -1,5 +1,7 @@
-package hotel.supplier.aggregator.search;
+package hotel.supplier.aggregator.search.controller;
 
+import hotel.supplier.aggregator.search.dto.SearchResponse;
+import hotel.supplier.aggregator.search.service.StaySearchService;
 import org.springframework.context.annotation.Profile;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.web.bind.annotation.GetMapping;
