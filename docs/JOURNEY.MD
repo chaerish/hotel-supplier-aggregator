@@ -212,4 +212,53 @@ Spring Boot 4.1.1을 쓰고 있는데, springdoc-openapi 2.x는 Spring Boot 3.x 
 - springdoc-openapi 버전 답변(3.x부터 Spring Boot 4 지원, 3.1.0 권장)을 그대로 받아들이지 않고, 실제로 의존성을 추가해 컴파일과 테스트를 통과시킨 뒤 docker-compose로 Swagger UI가 진짜 뜨는지까지 확인한 다음 채택했다.
 
 ### 참고 자료
-- 없음 
+- 없음
+
+## Day 4 - 2026-09-06 (일)
+
+### 오늘의 목표
+- [x] Swagger에 검색 API 예시 데이터 추가
+- [x] 재시도 정책 설계
+- [ ] 재시도 정책 구현
+- [x] 서킷 브레이커 설계
+- [ ] 서킷 브레이커 구현
+
+### 수행 내용
+- `StaySearchController`의 `checkIn`/`checkOut`/`adults`/`children` 파라미터에 `@Parameter(example = ...)`를 추가해, Mock Supplier 데이터 기준값이 Swagger UI "Try it out"에 미리 채워지도록 했다. `/v3/api-docs`에서 각 파라미터에 example 값이 실제로 들어갔는지 직접 확인했다.
+- Swagger로 실제 검색 결과를 보다가, 공급사 A/B가 이름이 같은 "Riverside Hotel Seoul"을 각각 다른 코드로 등록해 응답에 별개 항목 2개로 나오는 걸 확인했다. Day 1에 "공통 식별 키가 없어 정답이 없는 문제"로 판단해 중복 상품 병합을 선택 구현으로 미뤄둔 결정을 실제 데이터로 다시 확인한 셈이다. 지금 당장 손대지 않고 선택 구현 항목으로 계속 남겨두기로 했다.
+- 필수 구현 범위(①~⑤)가 모두 끝난 상태를 확인하고, 다음 작업으로 선택 구현 중 재시도 정책과 서킷 브레이커를 우선순위로 잡았다 (연동 견고성과 가장 직접적으로 연결되는 항목이라서).
+- 재시도 정책과 서킷 브레이커의 구체적인 설계(대상 예외, 횟수/지연, 라이브러리 도입 여부)를 정리했다. 구현은 다음 세션으로 넘긴다.
+
+### 의사결정
+#### [재시도: 별도 라이브러리 없이 Spring Framework 7 내장 `@Retryable` 사용]
+Spring Boot 4.1.1이 쓰는 Spring Framework 7부터 재시도 기능이 코어에 포함돼 있어(`@Retryable`, `RetryTemplate`), 재시도만을 위해 새 의존성을 추가할 이유가 없다고 판단했다.
+- 재시도 대상: `SupplierAdapterException`의 `TIMEOUT`, `TEMPORARILY_UNAVAILABLE`만. `UNKNOWN`은 재시도해도 같은 원인으로 다시 실패할 가능성이 높아 제외했다.
+- 횟수/지연: `maxRetries=1`(총 2회 시도), 고정 지연 300ms. Spring 기본값(`maxRetries=3`, `delay=1000ms`)을 그대로 쓰면 검색 API가 동기 응답을 기다리는 구조상 지연이 과도해질 수 있어 낮췄다.
+  - 검토했다 폐기한 대안: Resilience4j Retry 모듈 도입. 재시도 기능만 놓고 보면 이미 프레임워크 코어에 포함된 기능과 중복이라 폐기했다.
+
+#### [서킷 브레이커: `resilience4j-circuitbreaker` 코어 모듈만 도입 (오토컨피그 스타터 미사용)]
+Spring Framework/Boot 코어에는 서킷 브레이커 기능이 없다. Spring Cloud Circuit Breaker도 결국 내부적으로 Resilience4j 같은 구현체가 필요해, 직접 상태(닫힘/열림/반열림)와 실패율 윈도우를 관리하는 로직을 새로 짜는 것보다 검증된 라이브러리를 쓰는 쪽이 안정적이라고 판단했다.
+- `resilience4j-spring-boot3` 같은 오토컨피그 스타터 대신 `resilience4j-circuitbreaker` 코어 모듈만 추가해 직접 Bean으로 구성하기로 했다. 코어 모듈은 순수 자바 라이브러리라 Spring Boot 버전에 종속되지 않아, springdoc 때 겪었던 것 같은 호환성 문제 자체가 생기지 않는다.
+  - 검토했다 폐기한 대안: 서킷 브레이커도 직접 구현. 상태 전이 로직에서 버그가 날 위험이 크다고 판단해 폐기했다.
+
+### 막힌 지점 / 시행착오
+- 없음
+
+### AI 활용
+#### 무엇을 물었는지
+- Spring Boot 4와 호환되는 springdoc-openapi 파라미터 예시값 기능(`@Parameter(example=...)`)이 실제로 OpenAPI 스펙에 반영되는지 물어봄.
+- 재시도 정책 순서(재시도 먼저 vs 서킷 브레이커 먼저)에 대한 의견을 물었고, 재시도 사이 고정 지연 값의 구체적인 근거를 요구함.
+- Resilience4j와 Spring Boot 4의 호환 상태, 그리고 Spring 자체의 재시도 관련 기능 지원 여부를 조사해달라고 요청함.
+
+##### AI 답변을 어떻게 수용/수정/거부했는지
+- example 값이 스펙에 반영됐다는 답을 그대로 믿지 않고, 직접 `/v3/api-docs` 응답을 파싱해서 `example` 필드가 실제로 들어갔는지 확인한 뒤 반영했다.
+- 앞으로 이 섹션을 쓰는 방식 자체를 직접 지정해서 요청했다. AI가 알아서 판단할 문제가 아니라 사용자가 방향을 정하는 게 맞다고 판단했다.
+- AI가 처음 제시한 "고정 지연 300ms가 관례적인 값"이라는 답변에 출처를 요구했더니, 근거 없는 추측이었다는 게 드러났다. 실제 라이브러리 기본값(Resilience4j 500ms, Spring Retry 1000ms, AWS SDK 50ms 등)을 다시 조사하게 해 비교한 뒤 값을 정했다. 답을 그대로 받아들이지 않고 검증을 요구해 걸러낸 사례다.
+- 조사 과정에서 Spring Framework 7에 재시도 기능이 이미 코어로 포함돼 있다는 사실을 확인했고, 그 결과 원래 검토하던 "재시도·서킷 브레이커 둘 다 Resilience4j로 통일" 방향을 "재시도는 프레임워크 내장 기능, 서킷 브레이커만 Resilience4j"로 바꿨다.
+
+### 참고 자료
+- https://docs.spring.io/spring-framework/reference/core/resilience.html (Spring Framework 7 회복탄력성 기능: `@Retryable`, `RetryTemplate`)
+- https://dimitri.codes/spring-retry-core/ (Spring Retry가 Spring Framework 7 코어에 편입된 배경)
+- https://resilience4j.readme.io/docs/retry (Resilience4j Retry 모듈 기본값)
+- https://docs.spring.io/spring-retry/docs/api/current/org/springframework/retry/backoff/FixedBackOffPolicy.html (Spring Retry `FixedBackOffPolicy` 기본값)
+- https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html (AWS SDK 재시도 기본 지연값) 
