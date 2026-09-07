@@ -18,3 +18,12 @@ supplier:
     base-url: ${SUPPLIER_B_BASE_URL:http://localhost:9191}
   connect-timeout-ms: ${SUPPLIER_CONNECT_TIMEOUT_MS:2000}
   response-timeout-ms: ${SUPPLIER_RESPONSE_TIMEOUT_MS:3000}
+  retry:
+    max-retries: ${SUPPLIER_RETRY_MAX_RETRIES:1}
+    delay-ms: ${SUPPLIER_RETRY_DELAY_MS:300}
+  circuit-breaker:
+    sliding-window-size: ${SUPPLIER_CB_SLIDING_WINDOW_SIZE:10}
+    minimum-number-of-calls: ${SUPPLIER_CB_MINIMUM_CALLS:5}
+    failure-rate-threshold: ${SUPPLIER_CB_FAILURE_RATE_THRESHOLD:50}
+    wait-duration-in-open-state-seconds: ${SUPPLIER_CB_WAIT_DURATION_SECONDS:30}
+    permitted-calls-in-half-open-state: ${SUPPLIER_CB_HALF_OPEN_CALLS:3}

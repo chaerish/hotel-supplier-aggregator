@@ -9,8 +9,12 @@ import hotel.supplier.aggregator.search.dto.SearchResponse;
 import hotel.supplier.aggregator.supplier.SupplierAdapter;
 import hotel.supplier.aggregator.supplier.error.SupplierAdapterException;
 import hotel.supplier.aggregator.supplier.error.SupplierErrorCode;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -29,6 +33,7 @@ class StaySearchServiceTest {
 
     private final StayMappingRepository stayMappingRepository = mock(StayMappingRepository.class);
     private final Executor directExecutor = Runnable::run;
+    private final CircuitBreakerRegistry circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults();
     private final LocalDate checkIn = LocalDate.of(2026, 1, 1);
     private final LocalDate checkOut = LocalDate.of(2026, 1, 2);
 
@@ -48,7 +53,7 @@ class StaySearchServiceTest {
         when(stayMappingRepository.findBySupplierType(SupplierType.SUPPLIER_B)).thenReturn(List.of());
 
         StaySearchService service = new StaySearchService(
-                List.of(adapterA, adapterB), stayMappingRepository, directExecutor);
+                List.of(adapterA, adapterB), stayMappingRepository, directExecutor, circuitBreakerRegistry);
 
         SearchResponse result = service.search(checkIn, checkOut, 2, 0);
 
@@ -69,7 +74,8 @@ class StaySearchServiceTest {
         when(adapter.fetchAvailability(anyList(), eq(checkIn), eq(checkOut), eq(2), eq(0)))
                 .thenReturn(List.of());
 
-        StaySearchService service = new StaySearchService(List.of(adapter), stayMappingRepository, directExecutor);
+        StaySearchService service = new StaySearchService(
+                List.of(adapter), stayMappingRepository, directExecutor, circuitBreakerRegistry);
         service.search(checkIn, checkOut, 2, 0);
 
         verify(adapter, times(3)).fetchAvailability(anyList(), eq(checkIn), eq(checkOut), eq(2), eq(0));
@@ -94,7 +100,7 @@ class StaySearchServiceTest {
                 .thenReturn(List.of(offerB));
 
         StaySearchService service = new StaySearchService(
-                List.of(failingAdapter, workingAdapter), stayMappingRepository, directExecutor);
+                List.of(failingAdapter, workingAdapter), stayMappingRepository, directExecutor, circuitBreakerRegistry);
 
         SearchResponse result = service.search(checkIn, checkOut, 2, 0);
 
@@ -102,5 +108,32 @@ class StaySearchServiceTest {
         assertThat(result.partialFailures()).hasSize(1);
         assertThat(result.partialFailures().get(0).supplierType()).isEqualTo(SupplierType.SUPPLIER_A);
         assertThat(result.partialFailures().get(0).errorCode()).isEqualTo(SupplierErrorCode.TIMEOUT);
+    }
+
+    @Test
+    void 서킷_브레이커가_OPEN_상태면_호출을_건너뛰고_부분_실패로_기록한다() {
+        SupplierAdapter adapter = mock(SupplierAdapter.class);
+        when(adapter.getSupplierType()).thenReturn(SupplierType.SUPPLIER_A);
+        when(stayMappingRepository.findBySupplierType(SupplierType.SUPPLIER_A))
+                .thenReturn(List.of(new StayMapping(SupplierType.SUPPLIER_A, "A-1", "Hotel A")));
+
+        CircuitBreakerRegistry registryWithOpenCircuit = CircuitBreakerRegistry.of(
+                CircuitBreakerConfig.custom()
+                        .slidingWindowSize(1)
+                        .minimumNumberOfCalls(1)
+                        .waitDurationInOpenState(Duration.ofMinutes(1))
+                        .build());
+        CircuitBreaker circuitBreaker = registryWithOpenCircuit.circuitBreaker(SupplierType.SUPPLIER_A.name());
+        circuitBreaker.transitionToOpenState();
+
+        StaySearchService service = new StaySearchService(
+                List.of(adapter), stayMappingRepository, directExecutor, registryWithOpenCircuit);
+
+        SearchResponse result = service.search(checkIn, checkOut, 2, 0);
+
+        assertThat(result.offers()).isEmpty();
+        assertThat(result.partialFailures()).hasSize(1);
+        assertThat(result.partialFailures().get(0).errorCode()).isEqualTo(SupplierErrorCode.CIRCUIT_OPEN);
+        verify(adapter, never()).fetchAvailability(anyList(), eq(checkIn), eq(checkOut), eq(2), eq(0));
     }
 }
