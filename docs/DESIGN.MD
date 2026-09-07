@@ -269,13 +269,18 @@ sequenceDiagram
 - B: HTTP 200 + resultCode != '0000' → 실패. `SupplierBAdapter`가 응답 파싱 후 `resultCode`를 직접 확인해 같은 예외로 변환한다.
 - 두 경우 모두, 응답 자체를 못 받은 경우(`WebClientRequestException`, 연결/응답 타임아웃 포함)는 `SupplierAdapterException(TIMEOUT)`으로, 그 외 예기치 못한 예외는 `SupplierAdapterException(UNKNOWN)`으로 변환한다.
 
-### 재시도 (선택 구현, 설계 완료 / 구현 예정)
-- 대상: `SupplierAdapterException`의 `TIMEOUT`, `TEMPORARILY_UNAVAILABLE`만 재시도한다. `UNKNOWN`은 같은 원인으로 다시 실패할 가능성이 높아 제외했다.
-- 방식: 별도 라이브러리 없이 Spring Framework 7 내장 `@Retryable`을 사용한다. `maxRetries=1`(총 2회 시도), 고정 지연 300ms로 설정할 예정이다. Spring 기본값(`maxRetries=3`, `delay=1000ms`)은 동기 응답을 기다리는 검색 API 특성상 지연이 과도해질 수 있어 낮췄다.
+### 재시도 (선택 구현, 완료)
+- 대상: `SupplierAdapterException`의 `TIMEOUT`, `TEMPORARILY_UNAVAILABLE`만 재시도한다. `UNKNOWN`은 같은 원인으로 다시 실패할 가능성이 높아 제외했다. 판단 로직은 `SupplierRetryPredicate`(`MethodRetryPredicate` 구현)에 있다.
+- 방식: 별도 라이브러리 없이 Spring Framework 7 내장 `@Retryable`을 `SupplierAAdapter`/`SupplierBAdapter` 클래스 레벨에 적용했다. `maxRetries=1`(총 2회 시도), 고정 지연 300ms(둘 다 `supplier.retry.*` 환경변수로 오버라이드 가능). Spring 기본값(`maxRetries=3`, `delay=1000ms`)은 동기 응답을 기다리는 검색 API 특성상 지연이 과도해질 수 있어 낮췄다.
+- `@Retryable`은 Spring AOP 프록시로 동작해, 프록시가 적용된 스프링 빈을 통해 호출해야 재시도가 걸린다. `SupplierAAdapterRetryTest`에서 실제 스프링 컨텍스트를 띄워, 첫 호출 실패 후 재시도로 성공하는 경로와 계속 실패 시 정확히 `maxRetries`만큼만 재시도하고 예외를 던지는 경로 둘 다 검증했다.
   - 검토했다 폐기한 대안: Resilience4j Retry 모듈 도입. 재시도 기능만 놓고 보면 이미 프레임워크 코어에 포함된 기능과 중복이라 폐기했다.
 
-### 서킷 브레이커 (선택 구현, 설계 완료 / 구현 예정)
-- Spring Framework/Boot 코어에는 서킷 브레이커 기능이 없어, `resilience4j-circuitbreaker` 코어 모듈만 추가해 직접 Bean으로 구성할 예정이다. 오토컨피그 스타터(`resilience4j-spring-boot3` 등)는 Spring Boot 버전에 종속돼 호환성 문제가 생길 수 있어 배제했다.
+### 서킷 브레이커 (선택 구현, 완료)
+- Spring Framework/Boot 코어에는 서킷 브레이커 기능이 없어, `resilience4j-circuitbreaker` 코어 모듈(2.3.0)만 추가해 `SupplierCircuitBreakerConfig`에서 `CircuitBreakerRegistry` Bean으로 직접 구성했다. 오토컨피그 스타터(`resilience4j-spring-boot3` 등)는 Spring Boot 버전에 종속돼 호환성 문제가 생길 수 있어 배제했다.
+- 공급사(SUPPLIER_A/SUPPLIER_B)별로 이름이 다른 `CircuitBreaker` 인스턴스를 두고, `StaySearchService`가 `adapter.fetchAvailability(...)` 호출을 감싼다. 재시도까지 다 실패한 결과만 실패로 집계되도록, 서킷 브레이커가 재시도보다 바깥쪽에 위치한다.
+- 설정값(`supplier.circuit-breaker.*` 환경변수로 오버라이드 가능, Supplier 2곳뿐인 이 구현 규모에 맞춰 라이브러리 기본값보다 크게 낮춘 미검증 임시값): 슬라이딩 윈도우 10회, 최소 호출 수 5회, 실패율 임계치 50%, OPEN 유지 시간 30초, HALF_OPEN 시도 허용 수 3회.
+- 서킷이 OPEN이라 호출 자체를 건너뛴 경우는 새로 추가한 `SupplierErrorCode.CIRCUIT_OPEN`으로 부분 실패에 기록한다 (재시도까지 실패한 `TEMPORARILY_UNAVAILABLE`/`TIMEOUT`과 구분됨).
+- 검증: docker-compose로 전체 스택을 띄우고 Supplier B를 장애 모드로 전환해, 5번째 호출에서 실제로 `CIRCUIT_OPEN`으로 전환되는 것과(최소 호출 수 5회 충족), OPEN 유지 시간(30초)이 지난 뒤 HALF_OPEN 프로브가 성공해 다시 정상 응답으로 복구되는 것까지 직접 확인했다.
   - 검토했다 폐기한 대안: 서킷 브레이커도 직접 구현. 상태(닫힘/열림/반열림) 전이와 실패율 윈도우 계산을 직접 짜면 버그 위험이 크다고 판단해 폐기했다.
 ---
 
@@ -312,8 +317,8 @@ sequenceDiagram
 
 | 항목 | 진행 여부 | 설계/구현 내용 |
 |---|---|---|
-| 재시도 정책 | 설계 완료 | 5번 항목 참조 |
-| 서킷 브레이커 | 설계 완료 | 5번 항목 참조 |
+| 재시도 정책 | 완료 | 5번 항목 참조 |
+| 서킷 브레이커 | 완료 | 5번 항목 참조 |
 | 요금/재고 캐시 전략 | | |
 | 정규화 실패 데이터 격리 | | |
 | 중복 상품 병합 | | |

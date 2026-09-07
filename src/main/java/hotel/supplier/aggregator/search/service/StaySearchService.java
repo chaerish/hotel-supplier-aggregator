@@ -8,6 +8,10 @@ import hotel.supplier.aggregator.search.dto.PartialFailure;
 import hotel.supplier.aggregator.search.dto.SearchResponse;
 import hotel.supplier.aggregator.supplier.SupplierAdapter;
 import hotel.supplier.aggregator.supplier.error.SupplierAdapterException;
+import hotel.supplier.aggregator.supplier.error.SupplierErrorCode;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
@@ -28,14 +32,17 @@ public class StaySearchService {
     private final List<SupplierAdapter> adapters;
     private final StayMappingRepository stayMappingRepository;
     private final Executor supplierSearchExecutor;
+    private final CircuitBreakerRegistry circuitBreakerRegistry;
 
     public StaySearchService(
             List<SupplierAdapter> adapters,
             StayMappingRepository stayMappingRepository,
-            @Qualifier("supplierSearchExecutor") Executor supplierSearchExecutor) {
+            @Qualifier("supplierSearchExecutor") Executor supplierSearchExecutor,
+            CircuitBreakerRegistry circuitBreakerRegistry) {
         this.adapters = adapters;
         this.stayMappingRepository = stayMappingRepository;
         this.supplierSearchExecutor = supplierSearchExecutor;
+        this.circuitBreakerRegistry = circuitBreakerRegistry;
     }
 
     public SearchResponse search(LocalDate checkIn, LocalDate checkOut, int adults, int children) {
@@ -70,11 +77,16 @@ public class StaySearchService {
             LocalDate checkOut,
             int adults,
             int children) {
+        SupplierType supplierType = adapter.getSupplierType();
+        CircuitBreaker circuitBreaker = circuitBreakerRegistry.circuitBreaker(supplierType.name());
         try {
-            List<StandardRoomOffer> offers = adapter.fetchAvailability(hotelCodes, checkIn, checkOut, adults, children);
+            List<StandardRoomOffer> offers = circuitBreaker.executeSupplier(
+                    () -> adapter.fetchAvailability(hotelCodes, checkIn, checkOut, adults, children));
             return new BatchResult(offers, null);
+        } catch (CallNotPermittedException e) {
+            return new BatchResult(List.of(), new PartialFailure(
+                    supplierType, SupplierErrorCode.CIRCUIT_OPEN, "서킷 브레이커 OPEN 상태라 요청을 건너뜀: " + e.getMessage()));
         } catch (SupplierAdapterException e) {
-            SupplierType supplierType = adapter.getSupplierType();
             return new BatchResult(List.of(), new PartialFailure(supplierType, e.errorCode(), e.getMessage()));
         }
     }
