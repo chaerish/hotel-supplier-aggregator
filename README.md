@@ -184,7 +184,8 @@ src/main/java/.../
 - **부분 실패 허용:** `StaySearchService`가 공급사별/배치별 호출을 감싸, 일부가 실패해도 나머지 결과로 응답합니다.
 
 ### 6. (선택 구현 시) 추가 설계
-- 재시도 정책 / 서킷 브레이커 / 캐시 전략 / 정규화 실패 데이터 격리 / 중복 상품 병합 / 통화 처리 / 예약 대행 흐름 중 진행한 항목만 작성
+- **재시도 정책:** 별도 라이브러리 없이 Spring Framework 7 내장 `@Retryable`을 사용합니다. `TIMEOUT`/`TEMPORARILY_UNAVAILABLE`만 재시도 대상이고, 1회 재시도(총 2회 시도)에 고정 지연 300ms입니다. 자세한 근거는 [docs/DESIGN.md](docs/DESIGN.md) 5번 참조.
+- **서킷 브레이커:** `resilience4j-circuitbreaker` 코어 모듈로 공급사별 `CircuitBreaker`를 두고, 재시도까지 실패한 호출만 집계합니다(슬라이딩 윈도우 10회, 실패율 임계치 50%, OPEN 유지 30초). 자세한 근거는 [docs/DESIGN.md](docs/DESIGN.md) 5번 참조.
 ---
 
 ## 구현 범위
@@ -196,7 +197,7 @@ src/main/java/.../
 | ③ 통합 검색 API                 | 완료   | |
 | ④ 연동 견고성 (타임아웃/부분실패/실패판정통일) | 완료   | |
 | ⑤ Mock Supplier 구성          | 완료   | |
-| 선택: 재시도 정책                  | 미완료  | 설계 완료, 구현 예정 (docs/DESIGN.MD 5번) |
-| 선택: 서킷 브레이커                 | 미완료  | 설계 완료, 구현 예정 (docs/DESIGN.MD 5번) |
+| 선택: 재시도 정책                  | 완료   | docs/DESIGN.MD 5번 참조 |
+| 선택: 서킷 브레이커                 | 완료   | docs/DESIGN.MD 5번 참조 |
 | 선택: API 문서 자동화 (Swagger)    | 완료   | springdoc-openapi, `/swagger-ui/index.html` |
  

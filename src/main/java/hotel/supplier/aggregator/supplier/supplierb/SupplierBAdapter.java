@@ -3,10 +3,12 @@ package hotel.supplier.aggregator.supplier.supplierb;
 import hotel.supplier.aggregator.domain.CatalogEntry;
 import hotel.supplier.aggregator.domain.StandardRoomOffer;
 import hotel.supplier.aggregator.domain.SupplierType;
+import hotel.supplier.aggregator.resilience.SupplierRetryPredicate;
 import hotel.supplier.aggregator.supplier.SupplierAdapter;
 import hotel.supplier.aggregator.supplier.error.SupplierAdapterException;
 import hotel.supplier.aggregator.supplier.error.SupplierErrorCode;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.resilience.annotation.Retryable;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientRequestException;
@@ -15,6 +17,11 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 import java.time.LocalDate;
 import java.util.List;
 
+// TIMEOUT/TEMPORARILY_UNAVAILABLE만 재시도한다 (DESIGN.md 5번, SupplierRetryPredicate 참조).
+@Retryable(
+        predicate = SupplierRetryPredicate.class,
+        maxRetriesString = "${supplier.retry.max-retries}",
+        delayString = "${supplier.retry.delay-ms}")
 @Component
 public class SupplierBAdapter implements SupplierAdapter {
 

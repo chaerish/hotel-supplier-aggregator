@@ -261,4 +261,47 @@ Spring Framework/Boot 코어에는 서킷 브레이커 기능이 없다. Spring 
 - https://dimitri.codes/spring-retry-core/ (Spring Retry가 Spring Framework 7 코어에 편입된 배경)
 - https://resilience4j.readme.io/docs/retry (Resilience4j Retry 모듈 기본값)
 - https://docs.spring.io/spring-retry/docs/api/current/org/springframework/retry/backoff/FixedBackOffPolicy.html (Spring Retry `FixedBackOffPolicy` 기본값)
-- https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html (AWS SDK 재시도 기본 지연값) 
+- https://docs.aws.amazon.com/sdkref/latest/guide/feature-retry-behavior.html (AWS SDK 재시도 기본 지연값)
+
+## Day 5 - 2026-09-07 (월) - 재시도/서킷 브레이커 구현
+
+### 오늘의 목표
+- [x] 재시도 정책 구현 (`@Retryable`)
+- [x] 서킷 브레이커 구현 (`resilience4j-circuitbreaker`)
+- [x] docker-compose로 실제 동작 검증
+
+### 수행 내용
+- `SupplierRetryPredicate`(`MethodRetryPredicate` 구현)를 `resilience` 패키지에 추가하고, `SupplierAAdapter`/`SupplierBAdapter` 클래스 레벨에 `@Retryable(predicate = SupplierRetryPredicate.class, maxRetriesString = "${supplier.retry.max-retries}", delayString = "${supplier.retry.delay-ms}")`를 적용했다. `@EnableResilientMethods`를 선언한 `ResilienceConfig`를 `config` 패키지에 추가해 처리를 활성화했다.
+- `resilience4j-circuitbreaker` 2.3.0(코어 모듈만, 오토컨피그 스타터 미사용)을 의존성에 추가하고, `SupplierCircuitBreakerConfig`에서 `CircuitBreakerRegistry` Bean을 구성했다. `StaySearchService`가 공급사 이름으로 `CircuitBreaker`를 가져와 `adapter.fetchAvailability(...)` 호출을 감싸도록 수정했다 (재시도가 안쪽, 서킷 브레이커가 바깥쪽).
+- 서킷이 OPEN이라 호출을 건너뛴 경우를 구분해서 표현하려고 `SupplierErrorCode`에 `CIRCUIT_OPEN`을 추가하고, `CallNotPermittedException`을 잡아 부분 실패로 기록하도록 `StaySearchService`를 수정했다.
+- 재시도 값(`supplier.retry.*`)과 서킷 브레이커 값(`supplier.circuit-breaker.*`)을 기존 타임아웃 설정과 같은 패턴으로 `application.yml`에 환경변수 오버라이드 가능하게 추가했다.
+- `SupplierAAdapterRetryTest`를 새로 작성해, 실제 스프링 컨텍스트(`AnnotationConfigApplicationContext` + `@EnableResilientMethods`)를 띄운 뒤 프록시가 적용된 빈으로 재시도 동작(첫 실패 후 재시도로 성공 / 계속 실패 시 `maxRetries`만큼만 재시도 후 예외)을 검증했다. 다른 어댑터 테스트처럼 `new`로 직접 생성하면 AOP 프록시가 아예 안 걸려서 재시도가 검증되지 않는다는 걸 확인하고 이 방식을 택했다.
+- `StaySearchServiceTest`에 서킷 브레이커가 OPEN 상태면 어댑터 호출 자체를 건너뛰고 `CIRCUIT_OPEN` 부분 실패로 기록하는 테스트를 추가했다. 기존 3개 테스트는 `CircuitBreakerRegistry.ofDefaults()`(느슨한 기본값)를 넘겨 회귀 없이 그대로 통과시켰다.
+- docker-compose로 전체 스택을 띄우고 Supplier B를 장애 모드로 전환해, 검색 API를 반복 호출하며 실제 동작을 확인했다: 처음 4번은 `TEMPORARILY_UNAVAILABLE`(재시도까지 실패)로 응답하다가, 5번째 호출(최소 호출 수 5회 충족)에서 `CIRCUIT_OPEN`으로 전환됐다. Supplier B를 정상으로 되돌린 뒤 OPEN 유지 시간(30초)이 지나자 HALF_OPEN 프로브가 성공해 부분 실패 없는 정상 응답으로 복구되는 것까지 직접 확인했다.
+
+### 의사결정
+#### [재시도는 어댑터 클래스 레벨, 서킷 브레이커는 서비스 레이어에서 적용]
+`@Retryable`은 어댑터가 스프링 빈으로 존재해야 프록시가 걸리므로 어댑터 클래스에 직접 붙였고, 서킷 브레이커는 "재시도까지 실패한 결과만 집계"하는 설계(Day 4 의사결정)를 지키기 위해 어댑터를 호출하는 `StaySearchService` 쪽에서 감싸는 방식을 택했다. 어댑터 내부에 서킷 브레이커를 두면 재시도 한 번 한 번이 개별적으로 집계돼 의도한 순서(재시도 안쪽 → 서킷 브레이커 바깥쪽)가 깨진다.
+
+#### [CIRCUIT_OPEN을 SupplierErrorCode에 새 값으로 추가]
+서킷 OPEN으로 호출 자체를 못 한 경우를, 실제로 호출했다가 실패한 `TEMPORARILY_UNAVAILABLE`/`TIMEOUT`과 같은 코드로 묶으면 부분 실패 사유를 구분할 수 없다고 판단해 별도 값을 추가했다.
+  - 검토했다 폐기한 대안: 기존 `TEMPORARILY_UNAVAILABLE`을 재사용. 원인이 다른 두 상황을 같은 코드로 묶으면 API 소비자가 "공급사가 실제로 응답을 못 준 것"과 "우리가 아예 안 물어본 것"을 구분할 수 없어 폐기.
+
+### 막힌 지점 / 시행착오
+- `SupplierAAdapterRetryTest`에서 `AnnotationConfigApplicationContext#registerBean(SupplierAAdapter.class, ...)`으로 빈을 등록한 뒤 `context.getBean(SupplierAAdapter.class)`로 조회했더니 `NoSuchBeanDefinitionException`이 났다. `@Retryable`이 적용된 빈은 인터페이스(`SupplierAdapter`)만 구현하는 JDK 동적 프록시로 감싸져서, 구체 클래스 타입으로는 더 이상 조회되지 않는다는 걸 알게 됐다. `getBean(SupplierAdapter.class)`(인터페이스 타입)로 바꿔서 해결했다. 어차피 `StaySearchService`도 인터페이스로만 어댑터를 주입받으므로 실제 운영 코드의 사용 방식과도 일치한다.
+
+### AI 활용
+#### 무엇을 물었는지
+- `@Retryable`의 `predicate` 속성에 쓰는 `MethodRetryPredicate`의 정확한 패키지 경로와 메서드 시그니처, `@EnableResilientMethods`의 정확한 패키지 경로를 물어봄.
+- `resilience4j-circuitbreaker`의 최신 안정 버전을 물어봄.
+
+##### AI 답변을 어떻게 수용/수정/거부했는지
+- 처음 일반 검색으로는 `MethodRetryPredicate`가 `org.springframework.resilience.annotation` 패키지에 있다는 부정확한 답이 나왔는데, Spring 공식 Javadoc 페이지(버전 고정 URL)를 직접 다시 열어서 실제로는 `org.springframework.resilience.retry.MethodRetryPredicate`라는 걸 확인하고 바로잡았다. 틀린 패키지로 코드를 썼으면 컴파일부터 실패했을 것이다.
+- resilience4j-circuitbreaker 버전도 검색 결과가 1.4.0/1.2.0/2.3.0으로 뒤섞여 나와서, Maven Central의 검색 API(`search.maven.org/solrsearch`)를 직접 호출해 최신 버전이 2.3.0인 것을 재확인한 뒤 반영했다.
+- 실제로 코드를 컴파일하고(`./gradlew compileJava compileTestJava`), 전체 테스트를 통과시키고(`./gradlew test`), docker-compose로 재시도와 서킷 브레이커의 OPEN/HALF_OPEN/CLOSED 전이를 직접 눈으로 확인한 뒤에야 구현을 완료로 표시했다.
+
+### 참고 자료
+- https://docs.spring.io/spring-framework/docs/7.0.9/javadoc-api/org/springframework/resilience/annotation/Retryable.html (`@Retryable` 전체 속성)
+- https://docs.spring.io/spring-framework/docs/7.0.9/javadoc-api/org/springframework/resilience/retry/MethodRetryPredicate.html (`MethodRetryPredicate` 정확한 패키지와 시그니처)
+- https://docs.spring.io/spring-framework/docs/7.0.9/javadoc-api/org/springframework/resilience/annotation/EnableResilientMethods.html
+- https://search.maven.org/solrsearch/select?q=g:io.github.resilience4j+AND+a:resilience4j-circuitbreaker (Maven Central에서 직접 확인한 최신 버전) 
